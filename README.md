@@ -1,10 +1,9 @@
 # pycomcigan
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/hegelty/pycomcigan/publish.yml?label=action&logo=github&style=flat-square)](https://github.com/heglty/pycomcigan/actions)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pycomcigan)
-![PyPI](https://img.shields.io/pypi/v/pycomcigan)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/pycomcigan)
-![GitHub](https://img.shields.io/github/license/hegelty/pycomcigan)
-
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pycomcigan)](https://pypi.org/project/pycomcigan/)
+[![PyPI](https://img.shields.io/pypi/v/pycomcigan)](https://pypi.org/project/pycomcigan/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/pycomcigan)](https://pypi.org/project/pycomcigan/)
+[![GitHub](https://img.shields.io/github/license/hegelty/pycomcigan)](LICENSE)
 
 [컴시간알리미](http://컴시간학생.kr) 에서 시간표 정보를 가져오는 Python 라이브러리입니다.
 
