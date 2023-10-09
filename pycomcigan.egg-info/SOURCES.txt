@@ -1,3 +1,4 @@
+LICENSE
 README.md
 setup.py
 pycomcigan/__init__.py
