@@ -1,11 +1,11 @@
 import setuptools
 
-with open("README.md", "r") as fh:
+with open("README.md", "r", encoding='UTF-8') as fh:
     long_description = fh.read()
 
 setuptools.setup(
     name="pycomcigan",
-    version="1.0.4",
+    version="1.0.5",
     author="hegelty",
     author_email="skxodid0305@gmail.com",
     description="컴시간알리미 시간표 파싱 라이브러리입니다.",
