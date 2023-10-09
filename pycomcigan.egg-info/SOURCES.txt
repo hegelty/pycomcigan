@@ -1,0 +1,10 @@
+README.md
+setup.py
+pycomcigan/__init__.py
+pycomcigan/search_school.py
+pycomcigan/timetable.py
+pycomcigan.egg-info/PKG-INFO
+pycomcigan.egg-info/SOURCES.txt
+pycomcigan.egg-info/dependency_links.txt
+pycomcigan.egg-info/requires.txt
+pycomcigan.egg-info/top_level.txt

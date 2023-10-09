@@ -1,0 +1,10 @@
+README.md
+setup.py
+hegelty.egg-info/PKG-INFO
+hegelty.egg-info/SOURCES.txt
+hegelty.egg-info/dependency_links.txt
+hegelty.egg-info/requires.txt
+hegelty.egg-info/top_level.txt
+pycomcigan/__init__.py
+pycomcigan/search_school.py
+pycomcigan/timetable.py
