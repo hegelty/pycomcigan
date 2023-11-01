@@ -59,6 +59,7 @@ class TimeTable:
     day_time: list[str]
     update_date: str
     timetable: list[list[list[TimeTableData]]]
+    _homeroom_teacher: list[list[str]]
 
     MONDAY = 1
     TUESDAY = 2
@@ -156,6 +157,23 @@ class TimeTable:
 
         self.timetable = data
 
+        homeroom_teacher= resp["담임"]
+        for grade in range(len(homeroom_teacher)):
+            for cls in range(len(homeroom_teacher[grade])):
+                if homeroom_teacher[grade][cls] in [0,255]:
+                    del(homeroom_teacher[grade][cls:])
+                    break
+                else:
+                    homeroom_teacher[grade][cls] = teacher_list[homeroom_teacher[grade][cls]]
+        self._homeroom_teacher = homeroom_teacher
+
+    def homeroom(self, grade: int, cls: int):
+        """
+        :param grade: 학년
+        :param cls: 반
+        :return: 담임 선생님
+        """
+        return self._homeroom_teacher[grade - 1][cls - 1]
 
     def __str__(self):
         return f"학교 코드: {self.school_code}\n" \
