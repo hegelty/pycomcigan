@@ -5,7 +5,7 @@ with open("README.md", "r", encoding='UTF-8') as fh:
 
 setuptools.setup(
     name="pycomcigan",
-    version="1.1.0",
+    version="1.2.0",
     author="hegelty",
     author_email="skxodid0305@gmail.com",
     description="컴시간알리미 시간표 파싱 라이브러리입니다.",

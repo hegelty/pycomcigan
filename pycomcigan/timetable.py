@@ -100,6 +100,9 @@ class TimeTable:
         resp = resp.text.split('\n')[0]
         resp = json.loads(resp)
 
+        with open('timetable.json', 'w', encoding='UTF-8') as f:
+            f.write(json.dumps(resp, ensure_ascii=False, indent=4))
+
         self.school_code = school_code
         self.school_name = school_name
         self.local_code = local_code
@@ -142,13 +145,13 @@ class TimeTable:
                         data[grade][cls][day].append(
                             TimeTableData(
                                 period=period,
-                                subject=sub_list[period_num % 100],
-                                teacher=teacher_list[period_num // 100],
+                                subject=sub_list[period_num // 1000],
+                                teacher=teacher_list[period_num % 100],
                                 replaced=period_num != original_period,
                                 original=None if period_num == original_period else Lecture(
                                     period=period,
-                                    subject=sub_list[original_period % 100],
-                                    teacher=teacher_list[original_period // 100]
+                                    subject=sub_list[original_period // 1000],
+                                    teacher=teacher_list[original_period % 100]
                                 )
                             )
                         )
