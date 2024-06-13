@@ -21,6 +21,8 @@ $ pip install pycomcigan
 * 담임 정보
 
 ## 사용법
+### [Docs](/docs.md)
+### 예제
 ```python
 from pycomcigan import TimeTable, get_school_code
 
@@ -34,6 +36,9 @@ timetable = TimeTable("경기북과학고", week_num=1)
 
 # 3학년 1반 화요일 시간표
 print(timetable.timetable[3][1][timetable.THURSDAY])
+
+# 3학년 1반 담임선생님
+print(timetable.homeroom(3, 1))
 ```
 
 ## 라이센스
