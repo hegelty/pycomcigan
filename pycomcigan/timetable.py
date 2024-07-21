@@ -100,8 +100,8 @@ class TimeTable:
         resp = resp.text.split('\n')[0]
         resp = json.loads(resp)
 
-        with open('timetable.json', 'w', encoding='UTF-8') as f:
-            f.write(json.dumps(resp, ensure_ascii=False, indent=4))
+        # with open('timetable.json', 'w', encoding='UTF-8') as f:
+        #     f.write(json.dumps(resp, ensure_ascii=False, indent=4))
 
         self.school_code = school_code
         self.school_name = school_name
