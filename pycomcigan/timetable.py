@@ -135,24 +135,24 @@ class TimeTable:
 
                 for day in range(1, original_timetable[grade][cls][0] + 1):
                     data[grade][cls].append([])  # 요일 추가
-                    for period in range(1, original_timetable[grade][cls][day][0] + 1):
-                        original_period = original_timetable[grade][cls][day][period]
-                        if j[day][0] < period:
-                            period_num = 0
-                        else:
-                            period_num = j[day][period]
+                    for period in range(1, 8):  # 7교시까지 추가
+                        original_period = original_timetable[grade][cls][day][period] if period <= original_timetable[grade][cls][day][0] else 0
+                        period_num = j[day][period] if period <= j[day][0] else 0
+
+                        if period_num == 0 and original_period == 0:
+                            continue
 
                         data[grade][cls][day].append(
                             TimeTableData(
                                 period=period,
-                                subject=sub_list[period_num // 1000],
-                                teacher=teacher_list[period_num % 100],
+                                subject=sub_list[period_num // 1000] if period_num != 0 else "",
+                                teacher=teacher_list[period_num % 100] if period_num != 0 else "",
                                 replaced=period_num != original_period,
                                 original=None if period_num == original_period else Lecture(
                                     period=period,
                                     subject=sub_list[original_period // 1000],
                                     teacher=teacher_list[original_period % 100]
-                                )
+                                ) if original_period != 0 else None
                             )
                         )
                 cls += 1
@@ -223,3 +223,4 @@ def get_school_code(school_name, local_code, school_code, comcigan_code):
                     return data[0], data[2], data[3]
         return -1, -1, resp
     return resp['학교검색'][0][0], resp['학교검색'][0][2], resp['학교검색'][0][3]
+    
