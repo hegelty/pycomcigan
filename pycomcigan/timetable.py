@@ -155,6 +155,16 @@ class TimeTable:
                                 )
                             )
                         )
+                    for period in range(original_timetable[grade][cls][day][0] + 1, 9):
+                        data[grade][cls][day].append(
+                            TimeTableData(
+                                period=period,
+                                subject="",
+                                teacher="",
+                                replaced=False,
+                                original=None
+                            )
+                        )
                 cls += 1
             grade += 1
 
