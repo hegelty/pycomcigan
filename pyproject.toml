@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "pycomcigan"
+version = "1.3.0"
+description = "컴시간알리미 시간표 파싱 라이브러리입니다."
+authors = ["hegelty <dev@hegelty.me>"]
+readme = "README.md"
+homepage = "https://github.com/hegelty/pycomcigan"
+repository = "https://github.com/hegelty/pycomcigan"
+license = "MIT"
+packages = [{ include = "pycomcigan" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+requests = "^2.32.4"
+beautifulsoup4 = "*"
+urllib3 = "^2.5.0"
+
+[tool.poetry.group.dev.dependencies]
+twine = "^4.0.2"
+build = "*"
+pytest = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
