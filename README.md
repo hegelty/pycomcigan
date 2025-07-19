@@ -1,4 +1,5 @@
 # pycomcigan
+
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/hegelty/pycomcigan/python-publish.yml?label=action&logo=github&style=flat-square)](https://github.com/hegelty/pycomcigan/actions)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pycomcigan)](https://pypi.org/project/pycomcigan/)
 [![PyPI](https://img.shields.io/pypi/v/pycomcigan)](https://pypi.org/project/pycomcigan/)
@@ -16,13 +17,17 @@ $ pip install pycomcigan
 ```
 
 ## 기능
+
 * 시간표 가져오기
 * 학교 검색
 * 담임 정보
 
 ## 사용법
+
 ### [Docs](/docs.md)
+
 ### 예제
+
 ```python
 from pycomcigan import TimeTable, get_school_code
 
@@ -34,12 +39,18 @@ get_school_code("경기")
 # week_num: 0이면 이번주, 1이면 다음주
 timetable = TimeTable("경기북과학고", week_num=1)
 
-# 3학년 1반 화요일 시간표
-print(timetable.timetable[3][1][timetable.THURSDAY])
+# 시간표 출력
+for day in timetable.timetable[3][1]:
+    for time in day:
+        print(time, end=" ")
+    print()
 
 # 3학년 1반 담임선생님
 print(timetable.homeroom(3, 1))
+
+print(timetable)
 ```
 
 ## 라이센스
+
 [MIT License](LICENSE)
