@@ -1,9 +1,10 @@
 import base64
-from typing import Optional
-import requests
-import re
 import json
+import re
+from typing import Optional
 from urllib import parse
+
+import requests
 
 comcigan_url = 'http://comci.net:4082'
 headers = {
@@ -123,20 +124,23 @@ class TimeTable:
         for i in resp["자료" + code4]:
             cls = 0
             if grade == 0:
-                data.append([])  # 0학년 추가
+                data.append([])
                 grade += 1
                 continue
             for j in i:
                 if cls == 0:
-                    data.append([[]])  # 학년 + 0반 추가
+                    data.append([[]])
                     cls += 1
                     continue
-                data[grade].append([[]])  # 반추가
+                data[grade].append([[]])
 
                 for day in range(1, original_timetable[grade][cls][0] + 1):
-                    data[grade][cls].append([])  # 요일 추가
-                    for period in range(1, original_timetable[grade][cls][day][0] + 1):
-                        original_period = original_timetable[grade][cls][day][period]
+                    data[grade][cls].append([])
+                    max_periods = max(original_timetable[grade][cls][day][0], j[day][0])
+                    for period in range(1, max_periods + 1):
+                        original_period = original_timetable[grade][cls][day][period] if period <= \
+                                                                                         original_timetable[grade][cls][
+                                                                                             day][0] else 0
                         if j[day][0] < period:
                             period_num = 0
                         else:
@@ -170,11 +174,11 @@ class TimeTable:
 
         self.timetable = data
 
-        homeroom_teacher= resp["담임"]
+        homeroom_teacher = resp["담임"]
         for grade in range(len(homeroom_teacher)):
             for cls in range(len(homeroom_teacher[grade])):
-                if homeroom_teacher[grade][cls] in [0,255]:
-                    del(homeroom_teacher[grade][cls:])
+                if homeroom_teacher[grade][cls] in [0, 255]:
+                    del (homeroom_teacher[grade][cls:])
                     break
                 else:
                     homeroom_teacher[grade][cls] = teacher_list[homeroom_teacher[grade][cls]]
