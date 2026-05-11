@@ -2,16 +2,13 @@ import base64
 import json
 import re
 from typing import List, Optional, Tuple
-from urllib import parse
 
-import requests
-
-# Constants for Comcigan API
-COMCIGAN_URL = 'http://comci.net:4082'
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36'
-}
-
+from .helpers import (
+    school_search,
+    get_response_encoding,
+    get_comcigan_response_for_codes,
+    COMCIGAN_URL
+)
 
 class Lecture:
     """Represents a single lecture with period, subject, and teacher information."""
@@ -105,8 +102,7 @@ class TimeTable:
     @staticmethod
     def _get_comcigan_codes() -> Tuple[str, str, str, str, str, str, str]:
         """Fetch all necessary service codes from Comcigan."""
-        response = requests.get(COMCIGAN_URL + '/st', headers=HEADERS)
-        response.encoding = 'euc-kr'
+        response = get_comcigan_response_for_codes()
         content = response.text
 
         # Extract various codes using regex patterns
@@ -133,12 +129,7 @@ class TimeTable:
     def _resolve_school(self, school_name: str, local_code: int, school_code: int, comcigan_code: str) -> Tuple[
         int, str, int]:
         """Resolve school information from search results."""
-        search_url = COMCIGAN_URL + comcigan_code + parse.quote(school_name, encoding='euc-kr')
-        response = requests.get(search_url, headers=HEADERS)
-        response.encoding = 'UTF-8'
-
-        parsed_data = json.loads(response.text.strip(chr(0)))
-        search_results = parsed_data["학교검색"]
+        search_results = school_search(school_name, comcigan_code)
 
         if len(search_results) == 0:
             raise RuntimeError('School not found')
@@ -174,8 +165,7 @@ class TimeTable:
         encoded_params = base64.b64encode(f"{code0}_{school_code}_0_{week_num + 1}".encode('utf-8'))
         request_url = f'{COMCIGAN_URL}{comcigan_code[:7]}{str(encoded_params)[2:-1]}'
 
-        response = requests.get(request_url, headers=HEADERS)
-        response.encoding = 'UTF-8'
+        response = get_response_encoding(request_url, 'UTF-8')
 
         # Parse first line of response as JSON
         json_data = response.text.split('\n')[0]
