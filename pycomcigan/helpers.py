@@ -1,7 +1,8 @@
-import requests
-from urllib import parse
 import json
 from typing import List
+from urllib import parse
+
+import requests
 
 # Constants for Comcigan API
 COMCIGAN_URL = 'http://comci.net:4082'
@@ -9,14 +10,11 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36'
 }
 
-"""
-constant for hangul encoding
-Note: Using 'cp949' and not 'euc-kr'
-See: https://encoding.spec.whatwg.org/#legacy-multi-byte-korean-encodings
-* Internet webpages use euc-kr == Windows Codepage 949 / UHC / 확장 완성형
-* Python uses euc-kr == IBM Code Page 970 / 완성
-"""
+# Comcigan labels Korean pages as EUC-KR, but browsers decode that label as
+# Windows code page 949. Python exposes that encoding as cp949.
+# See: https://encoding.spec.whatwg.org/#legacy-multi-byte-korean-encodings
 KOR_ENC = 'cp949'
+
 
 def get_response_encoding(url: str, encoding: str) -> requests.Response:
     response = requests.get(url, headers=HEADERS)
@@ -25,14 +23,12 @@ def get_response_encoding(url: str, encoding: str) -> requests.Response:
 
 
 def get_comcigan_response_for_codes() -> requests.Response:
-    """Fetch all necessary service page from Comcigan for response codes."""
+    """Fetch the Comcigan service page used to extract response codes."""
     return get_response_encoding(f"{COMCIGAN_URL}/st", KOR_ENC)
 
 
 def encode_school_name(school_name: str) -> str:
-    """
-    Convert school name to its bytes encoded in CP949 (aka whatwg standard's 'EUC-KR')
-    """
+    """URL-encode a school name using Comcigan's Korean encoding."""
     return parse.quote(school_name, encoding=KOR_ENC)
 
 

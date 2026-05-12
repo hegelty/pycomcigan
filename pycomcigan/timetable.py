@@ -4,11 +4,12 @@ import re
 from typing import List, Optional, Tuple
 
 from .helpers import (
-    school_search,
-    get_response_encoding,
+    COMCIGAN_URL,
     get_comcigan_response_for_codes,
-    COMCIGAN_URL
+    get_response_encoding,
+    school_search,
 )
+
 
 class Lecture:
     """Represents a single lecture with period, subject, and teacher information."""

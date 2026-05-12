@@ -1,7 +1,7 @@
 import re
 from typing import List
 
-from .helpers import school_search, get_comcigan_response_for_codes
+from .helpers import get_comcigan_response_for_codes, school_search
 
 
 def get_comcigan_code() -> str:
