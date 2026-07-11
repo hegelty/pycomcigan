@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pycomcigan"
-version = "1.4.0"
+version = "1.4.1"
 description = "컴시간알리미 시간표 파싱 라이브러리입니다."
 authors = ["hegelty <dev@hegelty.me>"]
 readme = "README.md"
@@ -21,7 +21,7 @@ beautifulsoup4 = "*"
 urllib3 = "^2.5.0"
 
 [tool.poetry.group.dev.dependencies]
-twine = "^4.0.2"
+twine = "^6.2.0"
 build = "*"
 pytest = "*"
 

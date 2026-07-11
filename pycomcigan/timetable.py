@@ -106,26 +106,34 @@ class TimeTable:
         response = get_comcigan_response_for_codes()
         content = response.text
 
-        # Extract various codes using regex patterns
+        # Comcigan periodically renames the JSON fields embedded in this page.
+        # Capture the numeric portions instead of slicing whole regex matches so
+        # small JavaScript wrapper changes do not break the parser.
         patterns = {
-            'comcigan_code': '\\.\\/[0-9]+\\?[0-9]+l',
-            'code0': "sc_data\\(\'[0-9]+_",
-            'code1': '성명=자료.자료[0-9]+',
-            'code2': '자료.자료[0-9]+\\[sb\\]',
-            'code3': '=H시간표.자료[0-9]+',
-            'code4': '일일자료=Q자료\\(자료\\.자료[0-9]+',
-            'code5': '원자료=Q자료\\(자료\\.자료[0-9]+'
+            'service endpoint': r'\.(/\d+\?\d+l)',
+            'school request': r"sc_data\(\s*'(\d+)_",
+            # Q성명/Q과목명 were added to the service page in May 2026.
+            # Keep the wrappers optional for compatibility with older pages.
+            'teacher data': r'성명\s*=\s*(?:Q성명\(\s*)?자료\.자료(\d+)',
+            'subject data': r'(?:과목명\s*=\s*(?:Q과목명\(\s*)?)?자료\.자료(\d+)\[sb\]',
+            'update data': r'=\s*H시간표\.자료(\d+)',
+            'current timetable': r'일일자료\s*=\s*Q자료\(\s*자료\.자료(\d+)',
+            'original timetable': r'원자료\s*=\s*Q자료\(\s*자료\.자료(\d+)'
         }
 
-        comcigan_code = re.findall(patterns['comcigan_code'], content)[0][1:]
-        code0 = re.findall(patterns['code0'], content)[0][9:-1]
-        code1 = re.findall(patterns['code1'], content)[0][8:]
-        code2 = re.findall(patterns['code2'], content)[0][5:-4]
-        code3 = re.findall(patterns['code3'], content)[0][8:]
-        code4 = re.findall(patterns['code4'], content)[0][14:]
-        code5 = re.findall(patterns['code5'], content)[0][13:]
+        codes = []
+        for name, pattern in patterns.items():
+            match = re.search(pattern, content)
+            if match is None:
+                raise RuntimeError(
+                    f"Unable to parse Comcigan {name}; the service page structure may have changed"
+                )
+            codes.append(match.group(1))
 
-        return comcigan_code, code0, code1, code2, code3, code4, code5
+        return (
+            codes[0], codes[1], codes[2], codes[3],
+            codes[4], codes[5], codes[6]
+        )
 
     def _resolve_school(self, school_name: str, local_code: int, school_code: int, comcigan_code: str) -> Tuple[
         int, str, int]:
@@ -188,14 +196,17 @@ class TimeTable:
         self.update_date = data["자료" + code3]
 
         # Process teacher and subject lists
-        teacher_list = data["자료" + code1]
-        teacher_list[0] = ""
-        subject_list = data["자료" + code2]
+        teacher_list = [
+            self._format_teacher_name(name)
+            for name in data["자료" + code1]
+        ]
+        subject_list = list(data["자료" + code2])
         subject_list[0] = ""
 
         # Build timetable data structure
         self.timetable = self._build_timetable(
-            data, teacher_list, subject_list, code4, code5
+            data, teacher_list, subject_list, code4, code5,
+            int(data.get("분리", 100)), str(data.get("변경알림")) == "1"
         )
 
         # Process homeroom teacher information
@@ -203,7 +214,8 @@ class TimeTable:
             data["담임"], teacher_list
         )
 
-    def _build_timetable(self, data: dict, teacher_list: List[str], subject_list: List[str], code4: str, code5: str) -> \
+    def _build_timetable(self, data: dict, teacher_list: List[str], subject_list: List[str], code4: str, code5: str,
+                         subject_divisor: int, change_notifications: bool) -> \
             List[List[List[List[TimeTableData]]]]:
         """Build the complete timetable data structure."""
         original_timetable = data["자료" + code5]
@@ -223,7 +235,8 @@ class TimeTable:
 
                 class_timetable = self._build_class_timetable(
                     grade_idx, class_idx, class_data, original_timetable,
-                    teacher_list, subject_list
+                    teacher_list, subject_list, subject_divisor,
+                    change_notifications
                 )
                 grade_timetable.append(class_timetable)
 
@@ -233,7 +246,8 @@ class TimeTable:
 
     def _build_class_timetable(self, grade_idx: int, class_idx: int, class_data: List,
                                original_timetable: List, teacher_list: List[str],
-                               subject_list: List[str]) -> List[List[TimeTableData]]:
+                               subject_list: List[str], subject_divisor: int,
+                               change_notifications: bool) -> List[List[TimeTableData]]:
         """Build timetable for a specific class with guaranteed 8 periods per day."""
         class_timetable = [[]]  # Start with empty day 0
         original_class = original_timetable[grade_idx][class_idx]
@@ -251,7 +265,8 @@ class TimeTable:
             for period in range(1, max_periods + 1):
                 period_data = self._create_period_data(
                     period, day, class_data, original_class,
-                    teacher_list, subject_list
+                    teacher_list, subject_list, subject_divisor,
+                    change_notifications
                 )
                 day_timetable.append(period_data)
 
@@ -262,31 +277,48 @@ class TimeTable:
     @staticmethod
     def _create_period_data(period: int, day: int, class_data: List,
                             original_class: List, teacher_list: List[str],
-                            subject_list: List[str]) -> TimeTableData:
+                            subject_list: List[str], subject_divisor: int = 100,
+                            change_notifications: bool = False) -> TimeTableData:
         """Create TimeTableData for a specific period."""
         # Get original period data (handle bounds checking)
-        original_period = 0
+        original_period_raw = 0
         if (day < len(original_class) and
                 len(original_class[day]) > 0 and
                 period <= original_class[day][0] and
                 period < len(original_class[day])):
-            original_period = original_class[day][period]
+            original_period_raw = original_class[day][period]
 
         # Get current period data (handle bounds checking)
-        current_period = 0
+        current_period_raw = 0
         if (day < len(class_data) and
                 len(class_data[day]) > 0 and
                 period <= class_data[day][0] and
                 period < len(class_data[day])):
-            current_period = class_data[day][period]
+            current_period_raw = class_data[day][period]
+
+        original_period, original_subject_idx, original_teacher_idx = \
+            TimeTable._decode_period_code(original_period_raw, subject_divisor)
+        current_period, subject_idx, teacher_idx = \
+            TimeTable._decode_period_code(current_period_raw, subject_divisor)
+
+        marked_as_replaced = (
+            isinstance(current_period_raw, str) and
+            current_period_raw.startswith(">")
+        )
+        replaced = (
+            marked_as_replaced if change_notifications
+            else current_period != original_period
+        )
 
         # Create original lecture if replacement occurred
         original_lecture = None
-        if current_period != original_period and original_period != 0:
+        if replaced and original_period != 0:
             original_lecture = Lecture(
                 period=period,
-                subject=subject_list[original_period // 1000] if original_period // 1000 < len(subject_list) else "",
-                teacher=teacher_list[original_period % 100] if original_period % 100 < len(teacher_list) else ""
+                subject=subject_list[original_subject_idx]
+                if original_subject_idx < len(subject_list) else "",
+                teacher=teacher_list[original_teacher_idx]
+                if original_teacher_idx < len(teacher_list) else ""
             )
 
         # Get subject and teacher names with bounds checking
@@ -294,9 +326,6 @@ class TimeTable:
         teacher_name = ""
 
         if current_period != 0:
-            subject_idx = current_period // 1000
-            teacher_idx = current_period % 100
-
             if subject_idx < len(subject_list):
                 subject_name = subject_list[subject_idx]
             if teacher_idx < len(teacher_list):
@@ -306,9 +335,50 @@ class TimeTable:
             period=period,
             subject=subject_name,
             teacher=teacher_name,
-            replaced=current_period != original_period,
+            replaced=replaced,
             original=original_lecture
         )
+
+    @staticmethod
+    def _decode_period_code(value, subject_divisor: int) -> Tuple[int, int, int]:
+        """Decode Comcigan's packed subject/teacher value.
+
+        Current timetable values can be strings prefixed with ``>`` to mark a
+        changed lecture. The final three digits are the teacher index; the
+        preceding digits contain the subject index and optional time-group data.
+        """
+        if value in (None, "", 0, "0"):
+            return 0, 0, 0
+
+        value_text = str(value)
+        if value_text.startswith(">"):
+            value_text = value_text[1:]
+
+        try:
+            packed_value = int(value_text)
+        except ValueError:
+            return 0, 0, 0
+
+        subject_code, teacher_idx = divmod(packed_value, 1000)
+        subject_idx = subject_code % subject_divisor
+        return packed_value, subject_idx, teacher_idx
+
+    @staticmethod
+    def _format_teacher_name(name) -> str:
+        """Apply the same masked-name formatting as Comcigan's Q성명."""
+        if not isinstance(name, str):
+            return ""
+
+        contains_internal_mask = (
+            "*" in name and
+            not name.startswith("*") and
+            not name.endswith("*")
+        )
+        is_two_character_mask = len(name) == 2 and name[1] == "*"
+        if contains_internal_mask or is_two_character_mask:
+            return name
+
+        return name.replace("*", "", 1)
 
     @staticmethod
     def _process_homeroom_teachers(homeroom_data: List[List[int]], teacher_list: List[str]) -> List[List[str]]:
