@@ -150,7 +150,7 @@ class TimeTable:
             return result[0], result[2], result[3]
 
     @staticmethod
-    def _handle_multiple_schools(search_results: List[List], school_code: int, local_code: int) -> Tuple[
+    def _handle_multiple_schools(search_results: List[Tuple[int, str, str, int]], school_code: int, local_code: int) -> Tuple[
         int, str, int]:
         """Handle case when multiple schools are found in search results."""
         if school_code:
@@ -166,7 +166,7 @@ class TimeTable:
         raise RuntimeError('Multiple schools found - please specify school_code or local_code')
 
     @staticmethod
-    def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple) -> dict:
+    def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple[str, str, str, str, str, str, str]) -> dict:
         """Fetch timetable data from Comcigan API."""
         comcigan_code, code0, *_ = comcigan_codes
 
@@ -181,7 +181,7 @@ class TimeTable:
         return json.loads(json_data)
 
     def _initialize_from_data(self, data: dict, local_code: int, school_name: str, school_code: int,
-                              comcigan_codes: Tuple) -> None:
+                              comcigan_codes: Tuple[str, str, str, str, str, str, str]) -> None:
         """Initialize instance variables from fetched data."""
         _, _, code1, code2, code3, code4, code5 = comcigan_codes
 
@@ -220,14 +220,14 @@ class TimeTable:
         """Build the complete timetable data structure."""
         original_timetable = data["자료" + code5]
         current_timetable = data["자료" + code4]
-        timetable = []
+        timetable: List[List[List[List[TimeTableData]]]] = []
 
         for grade_idx, grade_data in enumerate(current_timetable):
             if grade_idx == 0:
                 timetable.append([])
                 continue
 
-            grade_timetable = [[]]  # Start with empty class 0
+            grade_timetable: List[List[List[TimeTableData]]] = [[]]  # Start with empty class 0
 
             for class_idx, class_data in enumerate(grade_data):
                 if class_idx == 0:
@@ -249,11 +249,11 @@ class TimeTable:
                                subject_list: List[str], subject_divisor: int,
                                change_notifications: bool) -> List[List[TimeTableData]]:
         """Build timetable for a specific class with guaranteed 8 periods per day."""
-        class_timetable = [[]]  # Start with empty day 0
+        class_timetable: List[List[TimeTableData]] = [[]]  # Start with empty day 0
         original_class = original_timetable[grade_idx][class_idx]
 
         for day in range(1, original_class[0] + 1):
-            day_timetable = []
+            day_timetable: List[TimeTableData] = []
 
             # Ensure we always have 8 periods per day
             max_periods = max(
@@ -383,10 +383,10 @@ class TimeTable:
     @staticmethod
     def _process_homeroom_teachers(homeroom_data: List[List[int]], teacher_list: List[str]) -> List[List[str]]:
         """Process homeroom teacher data and convert to teacher names."""
-        processed_homeroom = []
+        processed_homeroom: List[List[str]] = []
 
         for grade_teachers in homeroom_data:
-            grade_homeroom = []
+            grade_homeroom: List[str] = []
             for teacher_code in grade_teachers:
                 if teacher_code in [0, 255]:
                     break

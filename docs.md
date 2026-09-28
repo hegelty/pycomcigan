@@ -31,7 +31,7 @@ $ pip install pycomcigan
 from pycomcigan import TimeTable, get_school_code
 
 # 학교 검색
-# [지역코드, 지역명, 학교명, 학교코드] 리스트로 응답
+# [(지역 코드, 지역명, 학교명, 학교 코드), ...] 튜플 리스트로 응답
 get_school_code("경기")
 
 # 시간표 가져오기
@@ -57,11 +57,11 @@ get_school_code(school_name: str)
 
 * `school_name`: 학교 이름(일부 또는 전체)
 
-**return**: 학교 정보 리스트
+**return**: 학교 정보 리스트 (튜플 리스트)
 
 ```python
 [
-    [지역코드, 지역명, 학교명, 학교코드],
+    (지역코드, 지역명, 학교명, 학교코드),
     ...
 ]
 ```

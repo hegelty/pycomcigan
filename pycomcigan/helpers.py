@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Tuple
 from urllib import parse
 
 import requests
@@ -32,7 +32,7 @@ def encode_school_name(school_name: str) -> str:
     return parse.quote(school_name, encoding=KOR_ENC)
 
 
-def school_search(school_name: str, comcigan_code: str) -> List[List]:
+def school_search(school_name: str, comcigan_code: str) -> List[Tuple[int, str, str, int]]:
     """
     Search for schools by name and return their information.
 
@@ -41,12 +41,12 @@ def school_search(school_name: str, comcigan_code: str) -> List[List]:
         comcigan_code (str): Previously extracted Comcigan service code
 
     Returns:
-        List[List]: List of school information in format:
-                   [[region_code, region_name, school_name, school_code], ...]
+        List[Tuple[int, str, str, int]]: List of school information in format:
+                   [(region_code, region_name, school_name, school_code), ...]
     """
     school_name_encoded = encode_school_name(school_name)
     search_url = f"{COMCIGAN_URL}{comcigan_code}{school_name_encoded}"
     response = get_response_encoding(search_url, 'UTF-8')
 
     parsed_data = json.loads(response.text.strip(chr(0)))
-    return parsed_data["학교검색"]
+    return list(map(tuple, parsed_data["학교검색"]))
