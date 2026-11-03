@@ -2,6 +2,7 @@ import re
 from typing import List
 
 from .helpers import get_comcigan_response_for_codes, school_search
+from .service_page import decode_service_page
 
 
 def get_comcigan_code() -> str:
@@ -13,7 +14,13 @@ def get_comcigan_code() -> str:
     """
     response = get_comcigan_response_for_codes()
 
-    return re.findall('\\.\\/[0-9]+\\?[0-9]+l', response.text)[0][1:]
+    content = decode_service_page(response.text)
+    match = re.search(r'\.(/\d+\?\d+l)', content)
+    if match is None:
+        raise RuntimeError(
+            "Unable to parse Comcigan service endpoint; the service page structure may have changed"
+        )
+    return match.group(1)
 
 
 def get_school_code(school_name: str) -> List[List]:

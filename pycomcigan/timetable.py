@@ -9,6 +9,7 @@ from .helpers import (
     get_response_encoding,
     school_search,
 )
+from .service_page import decode_service_page
 
 
 class Lecture:
@@ -104,7 +105,7 @@ class TimeTable:
     def _get_comcigan_codes() -> Tuple[str, str, str, str, str, str, str]:
         """Fetch all necessary service codes from Comcigan."""
         response = get_comcigan_response_for_codes()
-        content = response.text
+        content = decode_service_page(response.text)
 
         # Comcigan periodically renames the JSON fields embedded in this page.
         # Capture the numeric portions instead of slicing whole regex matches so
@@ -172,7 +173,8 @@ class TimeTable:
 
         # Encode request parameters
         encoded_params = base64.b64encode(f"{code0}_{school_code}_0_{week_num + 1}".encode('utf-8'))
-        request_url = f'{COMCIGAN_URL}{comcigan_code[:7]}{str(encoded_params)[2:-1]}'
+        endpoint = comcigan_code.split('?', 1)[0]
+        request_url = f'{COMCIGAN_URL}{endpoint}?{encoded_params.decode("ascii")}'
 
         response = get_response_encoding(request_url, 'UTF-8')
 
