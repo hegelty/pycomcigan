@@ -23,7 +23,7 @@ def envelope(data, version='enc5', key=KEY, padded=False):
         data = padder.update(data) + padder.finalize()
     encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
     cipher = encryptor.update(data) + encryptor.finalize()
-    encode = (lambda b: base64.b64encode(b).decode('ascii')) if version == 'enc5' else bytes.hex
+    encode = bytes.hex if version == 'enc1' else (lambda b: base64.b64encode(b).decode('ascii'))
     head = ':'.join((version, encode(iv), encode(cipher)))
     tag = hmac.new(hashlib.sha256(key).digest(), head.encode(), hashlib.sha256).digest()
     return head + ':' + encode(tag)
@@ -43,8 +43,27 @@ def test_versions_and_key_lengths(version, key):
 def test_version_mismatch():
     with pytest.raises(RuntimeError, match='protocol mismatch'):
         decode_response(VECTOR, KEY, version='enc1')
+    with pytest.raises(RuntimeError, match='protocol mismatch'):
+        decode_response(VECTOR, KEY, version='enc6')
+
+
+@pytest.mark.parametrize('version', ['enc2', 'enc6', 'enc9'])
+def test_other_version_envelopes(version):
+    assert decode_response(envelope(b'{"n":1}', version), KEY, version=version) == {'n': 1}
+    assert decode_response(envelope(b'{"n":1}', 'enc1'), KEY, version=version) == {'n': 1}
+
+
+def test_spoofed_prefix_rejected():
+    spoofed = VECTOR.replace('enc5:', 'enc6:', 1)
+    with pytest.raises(RuntimeError, match='authentication'):
+        decode_response(spoofed, KEY, version='enc6')
+
+
+@pytest.mark.parametrize('version', ['', 'enc', 'enc-1', 'enc5x', 'ENC5', 'enc５',
+                                     'enc5\n', None, 5])
+def test_invalid_version(version):
     with pytest.raises(RuntimeError, match='Unsupported'):
-        decode_response(VECTOR, KEY, version='enc9')
+        decode_response(VECTOR, KEY, version=version)
 
 
 @pytest.mark.parametrize('text', ['{}', '{}\x00\n', '{"x":1}\n\x00'])

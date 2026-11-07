@@ -26,7 +26,7 @@ def decode_response(text: str, key: bytes = None, version: str = 'enc5') -> dict
         return _json_object(text.rstrip('\x00\r\n'))
     if not isinstance(key, bytes) or len(key) not in (16, 24, 32):
         raise RuntimeError("Invalid encryption key")
-    if version not in ('enc5', 'enc1'):
+    if not isinstance(version, str) or not re.fullmatch(r'enc[0-9]+', version):
         raise RuntimeError("Unsupported encryption version")
 
     fields = text.rstrip('\x00').split(':')
@@ -34,7 +34,7 @@ def decode_response(text: str, key: bytes = None, version: str = 'enc5') -> dict
         raise RuntimeError("Encrypted response protocol mismatch")
 
     try:
-        if fields[0] == 'enc5':
+        if fields[0] != 'enc1':
             parts = [base64.b64decode(field, validate=True) for field in fields[1:]]
             if any(base64.b64encode(part).decode('ascii') != field
                    for part, field in zip(parts, fields[1:])):

@@ -14,14 +14,14 @@ class ServiceProtocol:
 
 
 def parse_service_protocol(content: str) -> ServiceProtocol:
-    if 'function QAjaxSchool' not in content:
+    if re.search(r'\bfunction\s+QAjaxSchool\s*\(', content) is None:
         match = re.search(r'\.(/\d+\?\d+l)', content)
         if match is None:
             raise RuntimeError('Unable to parse Comcigan service endpoint; the service page structure may have changed')
         return ServiceProtocol(match.group(1))
 
     request = re.search(
-        r"function\s+QAjaxSchool\s*\([^)]*\)\s*\{.*?"
+        r"function\s+QAjaxSchool\s*\([^)]*\)\s*\{(?:(?!\bfunction\b).)*?"
         r"url\s*:\s*'\.(/\d+)\?'\s*\+\s*encodeURIComponent\(btoa\("
         r"'(\d+l)'\s*\+\s*encodeURIComponent\(sc\)\s*\+\s*'_(enc\d+)'\)\)",
         content, re.S,
@@ -29,6 +29,16 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if request is None:
         raise RuntimeError('Unable to parse Comcigan school request protocol')
     endpoint, prefix, version = request.groups()
+
+    timetable_request = re.search(
+        r"function\s+QAjaxTimetable\s*\([^)]*\)\s*\{(?:(?!\bfunction\b).)*?"
+        r"url\s*:\s*'\.(/\d+)\?'\s*\+\s*btoa\([^;{}]*?'_(enc[0-9]+)'\s*\)",
+        content, re.S,
+    )
+    if timetable_request is None or timetable_request.groups() != (endpoint, version):
+        raise RuntimeError(
+            'Comcigan service page structure changed: school and timetable request protocols do not match'
+        )
 
     key_match = re.search(r'var\s+key\s*=\s*CryptoJS\.enc\.Hex\.parse\((.*?)\);', content, re.S)
     if key_match is None:
@@ -56,7 +66,8 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
         raise RuntimeError('Invalid Comcigan response key size')
 
     column = re.search(r'Math\.floor\(학교명단\[i\]\[0\]\s*/\s*(\d+)\)\s*\+\s*(\d+)', content)
-    if column is None or int(column.group(1)) == 0:
+    if (column is None or int(column.group(1)) <= 0
+            or not 0 <= int(column.group(2)) <= 64):
         raise RuntimeError('Unable to parse Comcigan school code column')
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
                            int(column.group(1)), int(column.group(2)))
