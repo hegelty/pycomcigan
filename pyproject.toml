@@ -16,7 +16,6 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.9"
-pycryptodomex = ">=3.23,<4"
 
 [tool.poetry.group.dev.dependencies]
 twine = "^6.2.0"

@@ -5,8 +5,7 @@ import hmac
 import json
 import re
 
-from Cryptodome.Cipher import AES
-from Cryptodome.Util.Padding import unpad
+from ._aes import decrypt_cbc
 
 
 def _json_object(text):
@@ -54,8 +53,11 @@ def decode_response(text: str, key: bytes = None, version: str = 'enc5') -> dict
     if not hmac.compare_digest(expected, tag):
         raise RuntimeError("Encrypted response authentication failed")
     try:
-        padded = AES.new(key, AES.MODE_CBC, iv).decrypt(ciphertext)
-        plain = unpad(padded, AES.block_size)
+        padded = decrypt_cbc(key, iv, ciphertext)
+        padding_size = padded[-1]
+        if not 1 <= padding_size <= 16 or padded[-padding_size:] != bytes([padding_size]) * padding_size:
+            raise ValueError('Invalid PKCS7 padding')
+        plain = padded[:-padding_size]
         decoded = plain.decode('utf-8').rstrip('\x00')
     except (ValueError, UnicodeDecodeError):
         raise RuntimeError("Invalid encrypted response content") from None
