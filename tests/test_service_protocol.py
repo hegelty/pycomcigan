@@ -51,6 +51,41 @@ def test_changed_protocol_reports_useful_errors(old, new, error):
         parse_service_protocol(PAGE.replace(old, new))
 
 
+@pytest.mark.parametrize('old,new', [
+    ("url:'./987654?'+btoa", "url:'./123456?'+btoa"),
+    ("r+'_enc5'", "r+'_enc6'"),
+    ('function QAjaxTimetable', 'function RemovedTimetable'),
+    ("r+'_enc5'", "r+'_changed'"),
+])
+def test_timetable_protocol_mismatch_is_reported_at_page_parsing(old, new):
+    with pytest.raises(RuntimeError, match='structure changed.*protocols do not match'):
+        parse_service_protocol(PAGE.replace(old, new))
+
+
+def test_timetable_protocol_cannot_borrow_another_functions_request():
+    changed = PAGE.replace("url:'./987654?'+btoa", "url:'./changed?'+btoa")
+    changed += "function unrelated() {return $.ajax({url:'./987654?'+btoa(sc+'_enc5')});}"
+    with pytest.raises(RuntimeError, match='protocols do not match'):
+        parse_service_protocol(changed)
+
+
+@pytest.mark.parametrize('offset', [0, 64])
+def test_school_column_offset_bounds_are_inclusive(offset):
+    protocol = parse_service_protocol(PAGE.replace('/5000)+2', f'/5000)+{offset}'))
+    assert protocol.school_offset == offset
+
+
+@pytest.mark.parametrize('formula', ['/0)+2', '/-1)+2', '/5000)+65', '/5000)+-1'])
+def test_invalid_school_column_parameters_are_rejected(formula):
+    with pytest.raises(RuntimeError, match='school code column'):
+        parse_service_protocol(PAGE.replace('/5000)+2', formula))
+
+
+def test_protocol_captures_matching_new_version_and_whitespace():
+    page = PAGE.replace('_enc5', '_enc6').replace('function QAjaxSchool', 'function\n QAjaxSchool')
+    assert parse_service_protocol(page).version == 'enc6'
+
+
 def test_nested_ajax_wrappers_are_decoded_without_execution():
     inner = obfuscate(PAGE).replace('hour-obfuscated-v2', 'hour-ajax-obfuscated-v1')
     inner = inner.removeprefix('<script>').removesuffix('</script>')

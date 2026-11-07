@@ -7,10 +7,14 @@ import re
 _SCRIPT = re.compile(r'(<script\b[^>]*>)(.*?)(</script\s*>)', re.I | re.S)
 _MARKER = '/* hour-obfuscated-v2 */'
 _AJAX_MARKER = '/* hour-ajax-obfuscated-v1 */'
-_ERROR = 'Unable to decode Comcigan hour-obfuscated-v2 service page'
+_MAX_PAGE_SIZE = 16 * 1024 * 1024
+_MAX_PASSES = 4
+_MARKERS = (_MARKER, _AJAX_MARKER)
+_INVOCATION = re.compile(r'\}\s*\)\s*\(\s*(?=\[)')
+_TAIL = re.compile(r'\s*,\s*[0-9]{1,3}\s*\)\s*;?')
 
 
-def _decode_script(script: str) -> str:
+def _decode_script(script: str, max_size: int = None) -> str:
     """Read only the literal arguments of the known wrapper's invocation.
 
     JSON decoding deliberately rejects executable expressions and JavaScript-only
@@ -27,13 +31,21 @@ def _decode_script(script: str) -> str:
     if key > 255 or not isinstance(fragments, list):
         raise ValueError('invalid decoder arguments')
 
+    if max_size is None:
+        max_size = _MAX_PAGE_SIZE
     decoded = []
+    size = 0
     for fragment in fragments:
         if (not isinstance(fragment, list) or len(fragment) != 2
                 or type(fragment[0]) is not int or fragment[0] not in (0, 1)
                 or not isinstance(fragment[1], str)):
             raise ValueError('invalid fragment')
         plain, value = fragment
+        # Count UTF-16 units conservatively before allocating decoded fragments.
+        # Plain strings count Python characters; encoded strings count code units.
+        size += len(value) if plain else len(value) // 4
+        if size > max_size:
+            raise ValueError('decoded page exceeds size limit')
         if plain:
             decoded.append(value)
             continue
@@ -53,35 +65,61 @@ def _decode_script(script: str) -> str:
 
 
 def decode_service_page(content: str) -> str:
-    """Restore every hour-obfuscated-v2 script, leaving legacy pages unchanged."""
-    def replace(match: re.Match) -> str:
-        script = match.group(2)
-        if not script.lstrip().startswith(_MARKER):
-            return match.group(0)
-        try:
-            decoded = _decode_script(script)
-        except (ValueError, TypeError, RecursionError) as error:
-            raise RuntimeError(_ERROR) from error
-        return match.group(1) + decoded + match.group(3)
+    """Restore known wrappers in four passes; limit pages to 16 MiB UTF-8.
 
-    content = _SCRIPT.sub(replace, content)
-    # Ajax wrappers sit inline among ordinary functions, inside the outer script.
-    while _AJAX_MARKER in content:
-        start = content.index(_AJAX_MARKER)
-        try:
-            invocation = re.search(r'\}\s*\)\s*\(\s*(?=\[)', content[start:])
-            if invocation is None:
-                raise ValueError('missing Ajax invocation')
-            payload_start = start + invocation.end()
-            _, end = json.JSONDecoder().raw_decode(content, payload_start)
-            tail = re.match(r'\s*,\s*[0-9]{1,3}\s*\)\s*;?', content[end:])
-            if tail is None:
-                raise ValueError('invalid Ajax invocation')
-            stop = end + tail.end()
-            decoded = _decode_script(content[start:stop])
-            if _AJAX_MARKER in decoded:
-                raise ValueError('unexpected nested Ajax wrapper')
-        except (ValueError, TypeError, RecursionError) as error:
-            raise RuntimeError('Unable to decode Comcigan hour-ajax-obfuscated-v1 service page') from error
-        content = content[:start] + decoded + content[stop:]
+    Decoded hexadecimal fragments are conservatively measured in UTF-16 units.
+    """
+    if len(content) > _MAX_PAGE_SIZE or len(content.encode('utf-8', errors='surrogatepass')) > _MAX_PAGE_SIZE:
+        raise RuntimeError('Comcigan service page exceeds size limit')
+
+    for _ in range(_MAX_PASSES):
+        if not any(marker in content for marker in _MARKERS):
+            return content
+        pieces = []
+        cursor = 0
+        size = 0
+        for script_match in _SCRIPT.finditer(content):
+            position = script_match.start(2)
+            script_end = script_match.end(2)
+            while position < script_end:
+                hits = [(content.find(marker, position, script_end), marker) for marker in _MARKERS]
+                hits = [(start, marker) for start, marker in hits if start >= 0]
+                if not hits:
+                    break
+                start, marker = min(hits)
+                try:
+                    # Do not let a broken wrapper borrow a sibling's invocation.
+                    next_marker = min((p for p, _ in hits if p > start), default=script_end)
+                    same_marker = content.find(marker, start + len(marker), script_end)
+                    if same_marker >= 0:
+                        next_marker = min(next_marker, same_marker)
+                    invocation = _INVOCATION.search(content, start + len(marker), next_marker)
+                    if invocation is None:
+                        raise ValueError('missing literal fragment array')
+                    _, end = json.JSONDecoder().raw_decode(content, invocation.end())
+                    if end > script_end:
+                        raise ValueError('payload extends beyond script')
+                    tail = _TAIL.match(content, end, script_end)
+                    if tail is None:
+                        raise ValueError('invalid decoder invocation')
+                    stop = tail.end()
+                    prefix_size = start - cursor
+                    budget = _MAX_PAGE_SIZE - size - prefix_size
+                    decoded = _decode_script(content[start:stop], budget)
+                    pieces.extend((content[cursor:start], decoded))
+                    size += prefix_size + len(decoded)
+                    cursor = position = stop
+                except (ValueError, TypeError, RecursionError) as error:
+                    raise RuntimeError(f'Unable to decode Comcigan {marker[3:-3]} service page') from error
+        if not pieces:
+            break
+        if size + len(content) - cursor > _MAX_PAGE_SIZE:
+            raise RuntimeError('Comcigan service page exceeds size limit')
+        pieces.append(content[cursor:])
+        content = ''.join(pieces)
+        if len(content.encode('utf-8', errors='surrogatepass')) > _MAX_PAGE_SIZE:
+            raise RuntimeError('Comcigan service page exceeds size limit')
+    for marker in _MARKERS:
+        if marker in content:
+            raise RuntimeError(f'Unable to decode Comcigan {marker[3:-3]} service page: unresolved marker after {_MAX_PASSES} passes')
     return content
