@@ -5,8 +5,8 @@ import hmac
 import json
 import re
 
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import unpad
 
 
 def _json_object(text):
@@ -54,10 +54,8 @@ def decode_response(text: str, key: bytes = None, version: str = 'enc5') -> dict
     if not hmac.compare_digest(expected, tag):
         raise RuntimeError("Encrypted response authentication failed")
     try:
-        decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
-        padded = decryptor.update(ciphertext) + decryptor.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
-        plain = unpadder.update(padded) + unpadder.finalize()
+        padded = AES.new(key, AES.MODE_CBC, iv).decrypt(ciphertext)
+        plain = unpad(padded, AES.block_size)
         decoded = plain.decode('utf-8').rstrip('\x00')
     except (ValueError, UnicodeDecodeError):
         raise RuntimeError("Invalid encrypted response content") from None

@@ -3,8 +3,8 @@ import hashlib
 import hmac
 
 import pytest
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad
 
 from pycomcigan.encrypted_response import decode_response
 
@@ -19,10 +19,8 @@ VECTOR = ('enc5:EBESExQVFhcYGRobHB0eHw==:5qwiig2JsPsr050re7hAlw=='
 def envelope(data, version='enc5', key=KEY, padded=False):
     iv = bytes(range(16, 32))
     if not padded:
-        padder = padding.PKCS7(128).padder()
-        data = padder.update(data) + padder.finalize()
-    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
-    cipher = encryptor.update(data) + encryptor.finalize()
+        data = pad(data, AES.block_size)
+    cipher = AES.new(key, AES.MODE_CBC, iv).encrypt(data)
     encode = bytes.hex if version == 'enc1' else (lambda b: base64.b64encode(b).decode('ascii'))
     head = ':'.join((version, encode(iv), encode(cipher)))
     tag = hmac.new(hashlib.sha256(key).digest(), head.encode(), hashlib.sha256).digest()
