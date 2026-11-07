@@ -1,5 +1,4 @@
 import base64
-import json
 import re
 from typing import List, Optional, Tuple
 
@@ -10,6 +9,8 @@ from .helpers import (
     school_search,
 )
 from .service_page import decode_service_page
+from .service_protocol import parse_service_protocol
+from .encrypted_response import decode_response
 
 
 class Lecture:
@@ -72,16 +73,18 @@ class TimeTable:
         self._validate_inputs(week_num, local_code, school_code)
 
         # Fetch Comcigan service codes
-        comcigan_codes = self._get_comcigan_codes()
+        content = decode_service_page(get_comcigan_response_for_codes().text)
+        protocol = parse_service_protocol(content)
+        comcigan_codes = self._get_comcigan_codes(content)
 
         # Resolve school information
         resolved_local_code, resolved_school_name, resolved_school_code = self._resolve_school(
-            school_name, local_code, school_code, comcigan_codes[0]
+            school_name, local_code, school_code, comcigan_codes[0], protocol
         )
 
         # Fetch timetable data
         timetable_data = self._fetch_timetable_data(
-            resolved_school_code, week_num, comcigan_codes
+            resolved_school_code, week_num, comcigan_codes, protocol
         )
 
         # Initialize instance variables
@@ -102,16 +105,15 @@ class TimeTable:
             raise ValueError('local_code and school_code must be integers')
 
     @staticmethod
-    def _get_comcigan_codes() -> Tuple[str, str, str, str, str, str, str]:
+    def _get_comcigan_codes(content=None) -> Tuple[str, str, str, str, str, str, str]:
         """Fetch all necessary service codes from Comcigan."""
-        response = get_comcigan_response_for_codes()
-        content = decode_service_page(response.text)
+        if content is None:
+            content = decode_service_page(get_comcigan_response_for_codes().text)
 
         # Comcigan periodically renames the JSON fields embedded in this page.
         # Capture the numeric portions instead of slicing whole regex matches so
         # small JavaScript wrapper changes do not break the parser.
         patterns = {
-            'service endpoint': r'\.(/\d+\?\d+l)',
             'school request': r"sc_data\(\s*'(\d+)_",
             # Q성명/Q과목명 were added to the service page in May 2026.
             # Keep the wrappers optional for compatibility with older pages.
@@ -122,7 +124,7 @@ class TimeTable:
             'original timetable': r'원자료\s*=\s*Q자료\(\s*자료\.자료(\d+)'
         }
 
-        codes = []
+        codes = [parse_service_protocol(content).endpoint]
         for name, pattern in patterns.items():
             match = re.search(pattern, content)
             if match is None:
@@ -136,10 +138,10 @@ class TimeTable:
             codes[4], codes[5], codes[6]
         )
 
-    def _resolve_school(self, school_name: str, local_code: int, school_code: int, comcigan_code: str) -> Tuple[
+    def _resolve_school(self, school_name: str, local_code: int, school_code: int, comcigan_code: str, protocol=None) -> Tuple[
         int, str, int]:
         """Resolve school information from search results."""
-        search_results = school_search(school_name, comcigan_code)
+        search_results = school_search(school_name, comcigan_code, protocol)
 
         if len(search_results) == 0:
             raise RuntimeError('School not found')
@@ -167,20 +169,21 @@ class TimeTable:
         raise RuntimeError('Multiple schools found - please specify school_code or local_code')
 
     @staticmethod
-    def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple) -> dict:
+    def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple, protocol=None) -> dict:
         """Fetch timetable data from Comcigan API."""
         comcigan_code, code0, *_ = comcigan_codes
 
         # Encode request parameters
-        encoded_params = base64.b64encode(f"{code0}_{school_code}_0_{week_num + 1}".encode('utf-8'))
+        suffix = f'_{protocol.version}' if protocol and protocol.version else ''
+        encoded_params = base64.b64encode(f"{code0}_{school_code}_0_{week_num + 1}{suffix}".encode('utf-8'))
         endpoint = comcigan_code.split('?', 1)[0]
         request_url = f'{COMCIGAN_URL}{endpoint}?{encoded_params.decode("ascii")}'
 
         response = get_response_encoding(request_url, 'UTF-8')
 
-        # Parse first line of response as JSON
-        json_data = response.text.split('\n')[0]
-        return json.loads(json_data)
+        # Authenticate encrypted responses before parsing their JSON payload.
+        return decode_response(response.text, protocol.key if protocol else None,
+                               protocol.version if protocol else 'enc5')
 
     def _initialize_from_data(self, data: dict, local_code: int, school_name: str, school_code: int,
                               comcigan_codes: Tuple) -> None:

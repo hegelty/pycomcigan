@@ -19,6 +19,7 @@ python = "^3.9"
 requests = "^2.32.4"
 beautifulsoup4 = "*"
 urllib3 = "^2.5.0"
+cryptography = ">=42,<47"
 
 [tool.poetry.group.dev.dependencies]
 twine = "^6.2.0"
