@@ -6,6 +6,7 @@ import re
 
 _SCRIPT = re.compile(r'(<script\b[^>]*>)(.*?)(</script\s*>)', re.I | re.S)
 _MARKER = '/* hour-obfuscated-v2 */'
+_AJAX_MARKER = '/* hour-ajax-obfuscated-v1 */'
 _ERROR = 'Unable to decode Comcigan hour-obfuscated-v2 service page'
 
 
@@ -63,4 +64,24 @@ def decode_service_page(content: str) -> str:
             raise RuntimeError(_ERROR) from error
         return match.group(1) + decoded + match.group(3)
 
-    return _SCRIPT.sub(replace, content)
+    content = _SCRIPT.sub(replace, content)
+    # Ajax wrappers sit inline among ordinary functions, inside the outer script.
+    while _AJAX_MARKER in content:
+        start = content.index(_AJAX_MARKER)
+        try:
+            invocation = re.search(r'\}\s*\)\s*\(\s*(?=\[)', content[start:])
+            if invocation is None:
+                raise ValueError('missing Ajax invocation')
+            payload_start = start + invocation.end()
+            _, end = json.JSONDecoder().raw_decode(content, payload_start)
+            tail = re.match(r'\s*,\s*[0-9]{1,3}\s*\)\s*;?', content[end:])
+            if tail is None:
+                raise ValueError('invalid Ajax invocation')
+            stop = end + tail.end()
+            decoded = _decode_script(content[start:stop])
+            if _AJAX_MARKER in decoded:
+                raise ValueError('unexpected nested Ajax wrapper')
+        except (ValueError, TypeError, RecursionError) as error:
+            raise RuntimeError('Unable to decode Comcigan hour-ajax-obfuscated-v1 service page') from error
+        content = content[:start] + decoded + content[stop:]
+    return content
