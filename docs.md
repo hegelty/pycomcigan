@@ -92,6 +92,8 @@ timetable = TimeTable(school_name: str, local_code: int = 0, school_code: int = 
 
 여러 학교가 검색되는 경우 [학교 검색](#2-학교-검색)을 이용해 정확한 `school_code` 또는 `local_code`를 지정해주세요.
 
+코드는 정수 또는 정수로 변환 가능한 문자열로 지정할 수 있으며 `0`은 미지정을 뜻합니다. 검색 결과가 하나여도 지정한 코드와 일치해야 합니다. 두 코드를 함께 지정하면 모두 일치하는 학교를 선택합니다. 일치하는 학교가 없거나 조건을 적용한 뒤에도 여러 학교가 남으면 `RuntimeError`가 발생합니다.
+
 ### 시간표 조회
 
 ```python
