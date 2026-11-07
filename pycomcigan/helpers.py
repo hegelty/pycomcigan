@@ -19,8 +19,16 @@ HEADERS = {
 KOR_ENC = 'cp949'
 
 
-def get_response_encoding(url: str, encoding: str) -> requests.Response:
-    response = requests.get(url, headers=HEADERS)
+def get_response_encoding(url: str, encoding: str, request_token: str = None) -> requests.Response:
+    headers = dict(HEADERS)
+    if request_token is not None:
+        headers['X-Hour-Token'] = request_token
+    response = requests.get(url, headers=headers)
+    if response.status_code == 403:
+        raise RuntimeError('Comcigan request rejected (HTTP 403); the page token may have expired')
+    if response.status_code == 429:
+        raise RuntimeError('Comcigan rate limit reached (HTTP 429); retry later')
+    response.raise_for_status()
     response.encoding = encoding
     return response
 
@@ -56,7 +64,10 @@ def school_search(school_name: str, comcigan_code: str, protocol: ServiceProtoco
     else:
         school_name_encoded = encode_school_name(school_name)
         search_url = f"{COMCIGAN_URL}{comcigan_code}{school_name_encoded}"
-    response = get_response_encoding(search_url, 'UTF-8')
+    if protocol is not None and protocol.request_token is not None:
+        response = get_response_encoding(search_url, 'UTF-8', request_token=protocol.request_token)
+    else:
+        response = get_response_encoding(search_url, 'UTF-8')
 
     parsed_data = decode_response(response.text, protocol.key if protocol else None,
                                   protocol.version if protocol else 'enc5')
