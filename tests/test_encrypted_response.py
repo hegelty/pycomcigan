@@ -1,15 +1,18 @@
 import base64
 import hashlib
 import hmac
+import json
+from pathlib import Path
 
 import pytest
-from Cryptodome.Cipher import AES
-from Cryptodome.Util.Padding import pad
 
 from pycomcigan.encrypted_response import decode_response
 
 
 KEY = bytes(range(16))
+# Fixed synthetic ciphertexts generated with pycryptodomex 3.24.2 before removing
+# that dependency; tests never use the production AES code to encrypt fixtures.
+FIXTURES = json.loads((Path(__file__).parent / 'fixtures/aes-cbc-ciphertexts.json').read_text(encoding='utf-8'))
 # Independently generated using .NET Aes CBC/PKCS7 and HMACSHA256 in
 # PowerShell: key 00..0f, IV 10..1f, UTF-8 plaintext {"ok":true}.
 VECTOR = ('enc5:EBESExQVFhcYGRobHB0eHw==:5qwiig2JsPsr050re7hAlw=='
@@ -19,8 +22,9 @@ VECTOR = ('enc5:EBESExQVFhcYGRobHB0eHw==:5qwiig2JsPsr050re7hAlw=='
 def envelope(data, version='enc5', key=KEY, padded=False):
     iv = bytes(range(16, 32))
     if not padded:
-        data = pad(data, AES.block_size)
-    cipher = AES.new(key, AES.MODE_CBC, iv).encrypt(data)
+        size = 16 - len(data) % 16
+        data += bytes([size]) * size
+    cipher = bytes.fromhex(FIXTURES[key.hex() + ':' + iv.hex() + ':' + data.hex()])
     encode = bytes.hex if version == 'enc1' else (lambda b: base64.b64encode(b).decode('ascii'))
     head = ':'.join((version, encode(iv), encode(cipher)))
     tag = hmac.new(hashlib.sha256(key).digest(), head.encode(), hashlib.sha256).digest()
@@ -116,6 +120,17 @@ def test_invalid_lengths(index, data):
 def test_authenticated_invalid_padding():
     with pytest.raises(RuntimeError, match='content'):
         decode_response(envelope(b'A' * 16, padded=True), KEY)
+
+
+@pytest.mark.parametrize('data', [b'A' * 15 + b'\x00', b'A' * 15 + b'\x11', b'A' * 14 + b'\x01\x02'])
+def test_pkcs7_rejects_invalid_range_and_mixed_padding(data):
+    with pytest.raises(RuntimeError, match='content'):
+        decode_response(envelope(data, padded=True), KEY)
+
+
+def test_pkcs7_removes_complete_padding_block():
+    padded = b'{"ok":true}' + b' ' * 5 + bytes([16]) * 16
+    assert decode_response(envelope(padded, padded=True), KEY) == {'ok': True}
 
 
 def test_authenticated_invalid_utf8():
