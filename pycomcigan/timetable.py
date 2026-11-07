@@ -70,7 +70,7 @@ class TimeTable:
             ValueError: If week_num is not 0 or 1, or if codes are not integers
             RuntimeError: If multiple schools found or school not found
         """
-        self._validate_inputs(week_num, local_code, school_code)
+        local_code, school_code = self._validate_inputs(week_num, local_code, school_code)
 
         # Fetch Comcigan service codes
         content = decode_service_page(get_comcigan_response_for_codes().text)
@@ -93,14 +93,13 @@ class TimeTable:
         )
 
     @staticmethod
-    def _validate_inputs(week_num: int, local_code: int, school_code: int) -> None:
+    def _validate_inputs(week_num: int, local_code: int, school_code: int) -> Tuple[int, int]:
         """Validate input parameters."""
         if week_num not in [0, 1]:
             raise ValueError('week_num must be 0 or 1')
 
         try:
-            int(local_code)
-            int(school_code)
+            return int(local_code), int(school_code)
         except (ValueError, TypeError):
             raise ValueError('local_code and school_code must be integers')
 
@@ -141,32 +140,17 @@ class TimeTable:
     def _resolve_school(self, school_name: str, local_code: int, school_code: int, comcigan_code: str, protocol=None) -> Tuple[
         int, str, int]:
         """Resolve school information from search results."""
-        search_results = school_search(school_name, comcigan_code, protocol)
-
-        if len(search_results) == 0:
+        search_results = [
+            row for row in school_search(school_name, comcigan_code, protocol)
+            if (not school_code or row[3] == school_code)
+            and (not local_code or row[0] == local_code)
+        ]
+        if not search_results:
             raise RuntimeError('School not found')
-        elif len(search_results) > 1:
-            return self._handle_multiple_schools(search_results, school_code, local_code)
-        else:
-            # Single school found
-            result = search_results[0]
-            return result[0], result[2], result[3]
-
-    @staticmethod
-    def _handle_multiple_schools(search_results: List[List], school_code: int, local_code: int) -> Tuple[
-        int, str, int]:
-        """Handle case when multiple schools are found in search results."""
-        if school_code:
-            for data in search_results:
-                if data[3] == school_code:
-                    return data[0], data[2], data[3]
-
-        if local_code:
-            for data in search_results:
-                if data[0] == local_code:
-                    return data[0], data[2], data[3]
-
-        raise RuntimeError('Multiple schools found - please specify school_code or local_code')
+        if len(search_results) > 1:
+            raise RuntimeError('Multiple schools found - please specify school_code or local_code')
+        result = search_results[0]
+        return result[0], result[2], result[3]
 
     @staticmethod
     def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple, protocol=None) -> dict:
