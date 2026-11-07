@@ -1,8 +1,9 @@
 import base64
 from typing import List
 from urllib import parse
-
-import requests
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+from types import SimpleNamespace
 
 from .encrypted_response import decode_response
 from .service_protocol import ServiceProtocol
@@ -19,21 +20,24 @@ HEADERS = {
 KOR_ENC = 'cp949'
 
 
-def get_response_encoding(url: str, encoding: str, request_token: str = None) -> requests.Response:
+def get_response_encoding(url: str, encoding: str, request_token: str = None) -> SimpleNamespace:
     headers = dict(HEADERS)
     if request_token is not None:
         headers['X-Hour-Token'] = request_token
-    response = requests.get(url, headers=headers)
-    if response.status_code == 403:
-        raise RuntimeError('Comcigan request rejected (HTTP 403); the page token may have expired')
-    if response.status_code == 429:
-        raise RuntimeError('Comcigan rate limit reached (HTTP 429); retry later')
-    response.raise_for_status()
-    response.encoding = encoding
-    return response
+    try:
+        with urlopen(Request(url, headers=headers), timeout=30) as response:
+            return SimpleNamespace(text=response.read().decode(encoding, errors='replace'),
+                                   status_code=response.status)
+    except HTTPError as error:
+        error.close()
+        if error.code == 403:
+            raise RuntimeError('Comcigan request rejected (HTTP 403); the page token may have expired') from None
+        if error.code == 429:
+            raise RuntimeError('Comcigan rate limit reached (HTTP 429); retry later') from None
+        raise
 
 
-def get_comcigan_response_for_codes() -> requests.Response:
+def get_comcigan_response_for_codes() -> SimpleNamespace:
     """Fetch the Comcigan service page used to extract response codes."""
     return get_response_encoding(f"{COMCIGAN_URL}/st", KOR_ENC)
 
