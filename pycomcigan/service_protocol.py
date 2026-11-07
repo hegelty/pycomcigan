@@ -1,6 +1,6 @@
 import ast
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -11,6 +11,7 @@ class ServiceProtocol:
     version: Optional[str] = None
     school_divisor: Optional[int] = None
     school_offset: int = 0
+    request_token: Optional[str] = field(default=None, repr=False)
 
 
 def parse_service_protocol(content: str) -> ServiceProtocol:
@@ -39,6 +40,30 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
         raise RuntimeError(
             'Comcigan service page structure changed: school and timetable request protocols do not match'
         )
+
+    sections = []
+    for match in (request, timetable_request):
+        next_function = re.search(r'\bfunction\s+\w+\s*\(', content[match.end():])
+        end = match.end() + next_function.start() if next_function else len(content)
+        sections.append(content[match.start():end])
+
+    header_name = r"['\"]X-Hour-Token['\"]\s*:"
+    header_reference = (
+        r"headers\s*:\s*\{[^{}]*?['\"]X-Hour-Token['\"]\s*:\s*"
+        r"window\.__HourRequestToken\s*\|\|\s*(['\"])\1"
+    )
+    advertised = [re.search(header_name, section) is not None for section in sections]
+    request_token = None
+    if any(advertised):
+        if not all(re.search(header_reference, section) for section in sections):
+            raise RuntimeError('Invalid or inconsistent Comcigan request token headers')
+        token_match = re.search(
+            r"\bwindow\.__HourRequestToken\s*=\s*(['\"])([0-9a-fA-F]+)\1\s*;",
+            content,
+        )
+        if token_match is None:
+            raise RuntimeError('Unable to parse Comcigan request token literal')
+        request_token = token_match.group(2)
 
     key_match = re.search(r'var\s+key\s*=\s*CryptoJS\.enc\.Hex\.parse\((.*?)\);', content, re.S)
     if key_match is None:
@@ -70,4 +95,4 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
             or not 0 <= int(column.group(2)) <= 64):
         raise RuntimeError('Unable to parse Comcigan school code column')
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
-                           int(column.group(1)), int(column.group(2)))
+                           int(column.group(1)), int(column.group(2)), request_token)

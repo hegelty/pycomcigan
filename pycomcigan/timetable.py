@@ -179,7 +179,10 @@ class TimeTable:
         endpoint = comcigan_code.split('?', 1)[0]
         request_url = f'{COMCIGAN_URL}{endpoint}?{encoded_params.decode("ascii")}'
 
-        response = get_response_encoding(request_url, 'UTF-8')
+        if protocol is not None and protocol.request_token is not None:
+            response = get_response_encoding(request_url, 'UTF-8', request_token=protocol.request_token)
+        else:
+            response = get_response_encoding(request_url, 'UTF-8')
 
         # Authenticate encrypted responses before parsing their JSON payload.
         return decode_response(response.text, protocol.key if protocol else None,
