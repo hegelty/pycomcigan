@@ -12,7 +12,31 @@ from pycomcigan.service_protocol import parse_service_protocol
 from pycomcigan.timetable import TimeTable
 
 SCHOOL_NAME = '중일고등학교'
-MISSING_SCHOOL = '존재하지않는학교_파서상태검사_963852741'
+MISSING_SCHOOL = '존재하지않는학교'
+
+
+def validate_raw_timetable(grid):
+    """Check counted source arrays before the parser fills missing periods."""
+    if not isinstance(grid, list):
+        raise ValueError('invalid timetable array')
+    classes = {}
+    for grade_index, grade in enumerate(grid[1:], 1):
+        if not isinstance(grade, list):
+            raise ValueError('invalid grade array')
+        for class_index, classroom in enumerate(grade[1:], 1):
+            if (not isinstance(classroom, list) or not classroom
+                    or type(classroom[0]) is not int or classroom[0] <= 0
+                    or len(classroom) <= classroom[0]):
+                raise ValueError('invalid class day structure')
+            classes[grade_index, class_index] = classroom[0]
+            for day in classroom[1:classroom[0] + 1]:
+                if (not isinstance(day, list) or not day
+                        or type(day[0]) is not int or day[0] < 0
+                        or len(day) <= day[0]):
+                    raise ValueError('invalid day period structure')
+    if not classes:
+        raise ValueError('empty timetable structure')
+    return classes
 
 
 def validate_timetable(data, school, codes):
@@ -21,6 +45,10 @@ def validate_timetable(data, school, codes):
     입력: 복호화된 응답, 정규화된 학교 행, 페이지에서 추출한 자료 코드.
     출력: 시작일과 학급·수업 수를 담은 요약이며 비정상 구조는 오류로 처리한다.
     """
+    current = validate_raw_timetable(data['자료' + codes[5]])
+    original = validate_raw_timetable(data['자료' + codes[6]])
+    if current != original:
+        raise ValueError('inconsistent timetable class or day structure')
     table = TimeTable.__new__(TimeTable)
     table._initialize_from_data(data, school[0], school[2], school[3], codes)
     start = date.fromisoformat(table.start_date)

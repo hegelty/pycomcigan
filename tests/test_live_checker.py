@@ -1,6 +1,6 @@
 """실서버 상태 검사기의 실패 판정과 로그 노출 방지를 검증한다."""
 
-from types import SimpleNamespace
+from copy import deepcopy
 
 import pytest
 from requests.exceptions import Timeout
@@ -8,28 +8,56 @@ from requests.exceptions import Timeout
 from scripts import check_live_parser as checker
 
 
+CODES = ('/unused?1l', '107225', '119', '123', '108', '158', '167')
+SCHOOL = [5000, 'region', 'school', 123]
+
+
+def timetable_data(has_subject=True):
+    original = [[], [[], [1, [8] + [1001] * 8]]]
+    current = deepcopy(original) if has_subject else [[], [[], [1, [0]]]]
+    return {
+        '지역명': 'region', '학년도': 2026, '시작일': '2026-11-09', '일과시간': [],
+        '자료108': '2026-11-09', '자료119': ['', 'teacher'],
+        '자료123': ['', 'subject'], '자료158': current,
+        '자료167': original, '담임': [[1, 0]],
+    }
+
+
 @pytest.mark.parametrize('has_subject', [True, False])
-def test_validate_timetable_accepts_classes_and_holiday(monkeypatch, has_subject):
-    """
-    역할: 정상 수업과 휴일의 빈 수업을 모두 정상 구조로 판정하는지 확인한다.
-    입력: 과목 유무를 나타내는 테스트 매개변수와 패치 도구.
-    출력: 학급 수와 날짜가 포함된 요약을 확인한다.
-    """
-    def initialize(table, *args):
-        """
-        역할: 시간표 구조 검사용 학급과 교시를 구성한다.
-        입력: 초기화할 시간표와 사용하지 않는 운영 생성기 인자.
-        출력: 전달한 시간표의 검사 대상 필드를 설정한다.
-        """
-        table.start_date = '2026-11-09'
-        table.school_year = 2026
-        day = [SimpleNamespace(period=p, subject='subject' if has_subject else '', teacher='')
-               for p in range(1, 9)]
-        table.timetable = [[], [[], [[], day]]]
-    monkeypatch.setattr(checker.TimeTable, '_initialize_from_data', initialize)
-    result = checker.validate_timetable({}, [5000, 'region', 'school', 123], ())
+def test_validate_timetable_accepts_classes_and_holiday(has_subject):
+    result = checker.validate_timetable(timetable_data(has_subject), SCHOOL, CODES)
     assert 'start=2026-11-09, classes=1' in result
     assert f'subjects={8 if has_subject else 0}' in result
+
+
+@pytest.mark.parametrize('field', ['자료158', '자료167'])
+@pytest.mark.parametrize('grid', [
+    {}, [], [[], {}], [[], [[], {}]], [[], [[], []]],
+    [[], [[], [1]]], [[], [[], [1, {}]]], [[], [[], [1, []]]],
+    [[], [[], [1, [1]]]], [[], [[], [True, [0]]]],
+    [[], [[], [1, [True]]]],
+])
+def test_malformed_raw_arrays_fail_before_parser_normalization(monkeypatch, field, grid):
+    data = timetable_data()
+    data[field] = grid
+
+    def should_not_initialize(*args):
+        pytest.fail('raw arrays must be validated before parser normalization')
+
+    monkeypatch.setattr(checker.TimeTable, '_initialize_from_data', should_not_initialize)
+    with pytest.raises(ValueError):
+        checker.validate_timetable(data, SCHOOL, CODES)
+
+
+@pytest.mark.parametrize('grid', [
+    [[], [[], [1, [0]], [1, [0]]]],
+    [[], [[], [2, [0], [0]]]],
+])
+def test_current_and_original_class_and_day_structure_must_match(grid):
+    data = timetable_data()
+    data['자료158'] = grid
+    with pytest.raises(ValueError, match='inconsistent timetable'):
+        checker.validate_timetable(data, SCHOOL, CODES)
 
 
 def test_unpublished_response_fails_validation():
