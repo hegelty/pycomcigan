@@ -1,7 +1,7 @@
 # pycomcigan
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/hegelty/pycomcigan/python-publish.yml?label=action&logo=github&style=flat-square)](https://github.com/hegelty/pycomcigan/actions) [![Parser Health](https://img.shields.io/github/actions/workflow/status/mchany/pycomcigan/parser-health.yml?branch=master&label=parser%20health&logo=github&style=flat-square)](https://github.com/mchany/pycomcigan/actions/workflows/parser-health.yml)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pycomcigan)](https://pypi.org/project/pycomcigan/)
+[![Python >=3.9](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://pypi.org/project/pycomcigan/)
 [![PyPI](https://img.shields.io/pypi/v/pycomcigan)](https://pypi.org/project/pycomcigan/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/pycomcigan)](https://pypi.org/project/pycomcigan/)
 [![GitHub](https://img.shields.io/github/license/hegelty/pycomcigan)](LICENSE)
