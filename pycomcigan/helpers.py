@@ -1,8 +1,10 @@
 import json
+from dataclasses import dataclass
 from typing import List
 from urllib import parse
 
-import requests
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 # Constants for Comcigan API
 COMCIGAN_URL = 'http://comci.net:4082'
@@ -16,13 +18,35 @@ HEADERS = {
 KOR_ENC = 'cp949'
 
 
-def get_response_encoding(url: str, encoding: str) -> requests.Response:
-    response = requests.get(url, headers=HEADERS)
-    response.encoding = encoding
-    return response
+@dataclass(frozen=True)
+class _Response:
+    """The response fields consumed by this library."""
+
+    text: str
+    status_code: int
 
 
-def get_comcigan_response_for_codes() -> requests.Response:
+def get_response_encoding(url: str, encoding: str) -> _Response:
+    """Fetch and decode a page, retaining HTTP error bodies like requests.get.
+
+    Network failures propagate as urllib/OSError exceptions. This lightweight
+    response intentionally does not implement the complete requests.Response API.
+    """
+    request = Request(url, headers=HEADERS)
+    try:
+        response = urlopen(request)
+    except HTTPError as error:
+        # requests.get returns HTTP error responses unless raise_for_status is
+        # called. Keep that behavior rather than raising before body parsing.
+        response = error
+    with response:
+        return _Response(
+            text=response.read().decode(encoding, errors='replace'),
+            status_code=response.status,
+        )
+
+
+def get_comcigan_response_for_codes() -> _Response:
     """Fetch the Comcigan service page used to extract response codes."""
     return get_response_encoding(f"{COMCIGAN_URL}/st", KOR_ENC)
 

@@ -16,7 +16,6 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.9"
-requests = "^2.32.4"
 beautifulsoup4 = "*"
 urllib3 = "^2.5.0"
 
