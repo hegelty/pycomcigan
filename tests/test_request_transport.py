@@ -1,87 +1,93 @@
-"""Offline coverage for the standard-library HTTP transport."""
-import io
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 
 import pytest
 
-from pycomcigan.helpers import (
-    COMCIGAN_URL, HEADERS, KOR_ENC, get_comcigan_response_for_codes,
-    get_response_encoding, school_search,
-)
+from pycomcigan.helpers import HEADERS, get_response_encoding, school_search
+from pycomcigan.service_protocol import parse_service_protocol
+from pycomcigan.timetable import TimeTable
+from pycomcigan import get_school_code
+from test_encrypted_response import envelope
+from test_service_protocol import PAGE, KEY, CODES
 
 
-def response_with_bytes(body, status=200):
+TOKEN = 'ab' * 32
+TOKEN_PAGE = "window.__HourRequestToken='" + TOKEN + "';" + PAGE.replace(
+    "});}", ",headers:{'X-Hour-Token':window.__HourRequestToken || ''}});}")
+
+
+def response_with_text(text, status=200):
     response = Mock(status=status)
-    response.read.return_value = body
+    response.read.return_value = text.encode('utf-8')
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
     return response
 
 
-@pytest.mark.parametrize('encoding,text', [('UTF-8', '한글'), ('cp949', '뷁')])
-def test_success_decodes_body_and_closes_response(encoding, text):
-    response = response_with_bytes(text.encode(encoding))
-    headers = dict(HEADERS)
+def test_http_transport_adds_token_per_request_without_mutating_global_headers():
+    response = response_with_text('한글')
     with patch('pycomcigan.helpers.urlopen', return_value=response) as get:
-        result = get_response_encoding('http://example.test/data', encoding)
-    assert result.text == text
-    assert result.status_code == 200
-    request = get.call_args.args[0]
-    assert request.full_url == 'http://example.test/data'
-    assert request.get_method() == 'GET'
-    assert request.get_header('User-agent') == HEADERS['User-Agent']
-    assert HEADERS == headers
-    response.__exit__.assert_called_once()
+        result = get_response_encoding('http://example.test/data', 'UTF-8', TOKEN)
+        assert result.text == '한글'
+        assert result.status_code == 200
+        assert get.call_args.args[0].get_header('X-hour-token') == TOKEN
+        assert get.call_args.kwargs['timeout'] == 30
+        response.read.return_value = '한글'.encode('cp949')
+        assert get_response_encoding('http://example.test/page', 'cp949').text == '한글'
+        assert get.call_args.args[0].get_header('X-hour-token') is None
+    assert 'X-Hour-Token' not in HEADERS
+    assert response.__exit__.call_count == 2
 
 
-def test_service_page_uses_cp949_including_euc_kr_extension():
-    response = response_with_bytes('뷁'.encode('cp949'))
-    with patch('pycomcigan.helpers.urlopen', return_value=response) as get:
-        assert get_comcigan_response_for_codes().text == '뷁'
-    assert KOR_ENC == 'cp949'
-    assert get.call_args.args[0].full_url == COMCIGAN_URL + '/st'
-
-
-def test_invalid_bytes_are_replaced_like_requests_text():
-    with patch('pycomcigan.helpers.urlopen', return_value=response_with_bytes(b'\xffok')):
-        assert get_response_encoding('http://example.test', 'utf-8').text == '\ufffdok'
-
-
-@pytest.mark.parametrize('status', [403, 404, 429, 500])
-def test_http_error_body_and_status_are_returned_without_retry(status):
-    body = io.BytesIO('오류'.encode('cp949'))
-    error = HTTPError('http://example.test', status, 'error', {}, body)
-    with patch('pycomcigan.helpers.urlopen', side_effect=error) as get:
-        result = get_response_encoding('http://example.test', 'cp949')
-    assert result.status_code == status
-    assert result.text == '오류'
-    assert body.closed
+@pytest.mark.parametrize('status,message', [(403, 'HTTP 403.*token'), (429, 'HTTP 429.*retry later')])
+def test_rejected_request_is_not_decrypted_or_retried(status, message):
+    with patch('pycomcigan.helpers.urlopen', side_effect=HTTPError('http://example.test/data', status, 'rejected', {}, None)) as get, \
+         pytest.raises(RuntimeError, match=message) as error:
+        get_response_encoding('http://example.test/data', 'UTF-8', TOKEN)
     get.assert_called_once()
+    assert TOKEN not in str(error.value)
 
 
-@pytest.mark.parametrize('error', [URLError('DNS failure'), TimeoutError('timed out')])
-def test_network_errors_propagate_without_retry(error):
-    with patch('pycomcigan.helpers.urlopen', side_effect=error) as get:
-        with pytest.raises(type(error)) as caught:
-            get_response_encoding('http://example.test', 'utf-8')
-    assert caught.value is error
-    get.assert_called_once()
+def test_other_http_failure_is_raised_before_json_parsing():
+    response = HTTPError('http://example.test/data', 500, 'Server Error', {}, None)
+    with patch('pycomcigan.helpers.urlopen', side_effect=response), pytest.raises(HTTPError):
+        get_response_encoding('http://example.test/data', 'UTF-8', TOKEN)
 
 
-def test_read_failure_closes_response():
-    response = response_with_bytes(b'')
-    response.read.side_effect = OSError('connection interrupted')
-    with patch('pycomcigan.helpers.urlopen', return_value=response):
-        with pytest.raises(OSError, match='connection interrupted'):
-            get_response_encoding('http://example.test', 'utf-8')
-    response.__exit__.assert_called_once()
+def test_search_and_timetable_use_token_from_same_page():
+    protocol = parse_service_protocol(TOKEN_PAGE)
+    schools = {'학교검색': [[5000, 'region', 'school', 123]]}
+    search_response = SimpleNamespace(text=envelope(json.dumps(schools).encode(), key=KEY))
+    with patch('pycomcigan.helpers.get_response_encoding', return_value=search_response) as get:
+        assert school_search('school', protocol.endpoint, protocol)[0][3] == 123
+    assert get.call_args.kwargs['request_token'] == TOKEN
+    response = SimpleNamespace(text=envelope(b'{"ok":true}', key=KEY))
+    for week in (0, 1):
+        with patch('pycomcigan.timetable.get_response_encoding', return_value=response) as get:
+            assert TimeTable._fetch_timetable_data(123, week, CODES, protocol) == {'ok': True}
+        assert get.call_args.kwargs['request_token'] == TOKEN
 
 
-def test_school_search_uses_utf8_response_and_cp949_query():
-    schools = [[1, '지역', '뷁고', 123]]
-    body = (json.dumps({'학교검색': schools}, ensure_ascii=False) + '\x00').encode('utf-8')
-    with patch('pycomcigan.helpers.urlopen', return_value=response_with_bytes(body)) as get:
-        assert school_search('뷁', '/search?') == schools
-    assert get.call_args.args[0].full_url == COMCIGAN_URL + '/search?%94%EE'
+@pytest.mark.parametrize('week', [0, 1])
+def test_public_api_transmits_page_token_to_both_requests(week):
+    data = {
+        '지역명': '지역', '학년도': 2026, '시작일': '2026-11-02', '일과시간': [],
+        '자료108': '2026-11-03', '자료119': ['', '교사'], '자료123': ['', '수학'],
+        '자료158': [[], [[], [1, [1, 1001]]]],
+        '자료167': [[], [[], [1, [1, 1001]]]], '담임': [[1, 0]],
+    }
+    schools = envelope(json.dumps({'학교검색': [[5000, '지역', '테스트고', 123]]}).encode(), key=KEY)
+    responses = [response_with_text(TOKEN_PAGE), response_with_text(schools),
+                 response_with_text(envelope(json.dumps(data).encode(), key=KEY))]
+    responses[0].read.return_value = TOKEN_PAGE.encode('cp949')
+    with patch('pycomcigan.helpers.urlopen', side_effect=responses) as get:
+        table = TimeTable('테스트고', week_num=week)
+    assert table.school_code == 123
+    assert table.timetable[1][1][1][0].subject == '수학'
+    assert get.call_args_list[0].args[0].get_header('X-hour-token') is None
+    assert [call.args[0].get_header('X-hour-token') for call in get.call_args_list[1:]] == [TOKEN, TOKEN]
+    with patch('pycomcigan.helpers.urlopen', side_effect=responses[:2]) as get:
+        assert get_school_code('테스트고')[0][3] == 123
+    assert get.call_args.args[0].get_header('X-hour-token') == TOKEN
