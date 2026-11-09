@@ -1,8 +1,8 @@
-import re
 from typing import List
 
 from .helpers import get_comcigan_response_for_codes, school_search
 from .service_page import decode_service_page
+from .service_protocol import parse_service_protocol
 
 
 def get_comcigan_code() -> str:
@@ -15,12 +15,7 @@ def get_comcigan_code() -> str:
     response = get_comcigan_response_for_codes()
 
     content = decode_service_page(response.text)
-    match = re.search(r'\.(/\d+\?\d+l)', content)
-    if match is None:
-        raise RuntimeError(
-            "Unable to parse Comcigan service endpoint; the service page structure may have changed"
-        )
-    return match.group(1)
+    return parse_service_protocol(content).endpoint
 
 
 def get_school_code(school_name: str) -> List[List]:
@@ -34,4 +29,6 @@ def get_school_code(school_name: str) -> List[List]:
         List[List]: List of school information in format:
                    [[region_code, region_name, school_name, school_code], ...]
     """
-    return school_search(school_name, get_comcigan_code())
+    response = get_comcigan_response_for_codes()
+    protocol = parse_service_protocol(decode_service_page(response.text))
+    return school_search(school_name, protocol.endpoint, protocol)

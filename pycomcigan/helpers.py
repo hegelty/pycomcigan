@@ -1,8 +1,11 @@
-import json
+import base64
 from typing import List
 from urllib import parse
 
 import requests
+
+from .encrypted_response import decode_response
+from .service_protocol import ServiceProtocol
 
 # Constants for Comcigan API
 COMCIGAN_URL = 'http://comci.net:4082'
@@ -16,8 +19,16 @@ HEADERS = {
 KOR_ENC = 'cp949'
 
 
-def get_response_encoding(url: str, encoding: str) -> requests.Response:
-    response = requests.get(url, headers=HEADERS)
+def get_response_encoding(url: str, encoding: str, request_token: str = None) -> requests.Response:
+    headers = dict(HEADERS)
+    if request_token is not None:
+        headers['X-Hour-Token'] = request_token
+    response = requests.get(url, headers=headers, timeout=30)
+    if response.status_code == 403:
+        raise RuntimeError('Comcigan request rejected (HTTP 403); the page token may have expired')
+    if response.status_code == 429:
+        raise RuntimeError('Comcigan rate limit reached (HTTP 429); retry later')
+    response.raise_for_status()
     response.encoding = encoding
     return response
 
@@ -32,7 +43,7 @@ def encode_school_name(school_name: str) -> str:
     return parse.quote(school_name, encoding=KOR_ENC)
 
 
-def school_search(school_name: str, comcigan_code: str) -> List[List]:
+def school_search(school_name: str, comcigan_code: str, protocol: ServiceProtocol = None) -> List[List]:
     """
     Search for schools by name and return their information.
 
@@ -44,9 +55,37 @@ def school_search(school_name: str, comcigan_code: str) -> List[List]:
         List[List]: List of school information in format:
                    [[region_code, region_name, school_name, school_code], ...]
     """
-    school_name_encoded = encode_school_name(school_name)
-    search_url = f"{COMCIGAN_URL}{comcigan_code}{school_name_encoded}"
-    response = get_response_encoding(search_url, 'UTF-8')
+    if protocol is not None and protocol.version:
+        endpoint, prefix = protocol.endpoint.split('?', 1)
+        # Match JavaScript encodeURIComponent, including its punctuation safe set.
+        encoded_name = parse.quote(school_name, safe="~()*!.'-", encoding='utf-8')
+        token = base64.b64encode(f'{prefix}{encoded_name}_{protocol.version}'.encode('ascii')).decode('ascii')
+        search_url = f'{COMCIGAN_URL}{endpoint}?{parse.quote(token, safe="")}'
+    else:
+        school_name_encoded = encode_school_name(school_name)
+        search_url = f"{COMCIGAN_URL}{comcigan_code}{school_name_encoded}"
+    if protocol is not None and protocol.request_token is not None:
+        response = get_response_encoding(search_url, 'UTF-8', request_token=protocol.request_token)
+    else:
+        response = get_response_encoding(search_url, 'UTF-8')
 
-    parsed_data = json.loads(response.text.strip(chr(0)))
-    return parsed_data["학교검색"]
+    parsed_data = decode_response(response.text, protocol.key if protocol else None,
+                                  protocol.version if protocol else 'enc5')
+    rows = parsed_data.get('학교검색')
+    if not isinstance(rows, list):
+        raise RuntimeError('Invalid Comcigan school search response: missing school list')
+    if protocol is None or protocol.school_divisor is None:
+        return rows
+    results = []
+    for row in rows:
+        if (not isinstance(row, list) or len(row) < 4 or type(row[0]) is not int
+                or row[0] < 0):
+            raise RuntimeError('Invalid Comcigan school search row')
+        # Search responses include an "알림" footer, not a selectable school.
+        if row[0] == 0 and len(row) == 4 and row[3] == 0:
+            continue
+        column = row[0] // protocol.school_divisor + protocol.school_offset
+        if not 3 <= column < len(row) or type(row[column]) is not int:
+            raise RuntimeError('Invalid Comcigan school code column')
+        results.append(row[:3] + [row[column]])
+    return results
