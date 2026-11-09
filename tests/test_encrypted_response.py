@@ -10,8 +10,8 @@ from pycomcigan.encrypted_response import decode_response
 
 
 KEY = bytes(range(16))
-# Fixed synthetic ciphertexts generated with pycryptodomex 3.24.2 before removing
-# that dependency; tests never use the production AES code to encrypt fixtures.
+# Fixed synthetic ciphertexts generated with pycryptodomex 3.24.2;
+# tests never use the production AES code to encrypt fixtures at runtime.
 FIXTURES = json.loads((Path(__file__).parent / 'fixtures/aes-cbc-ciphertexts.json').read_text(encoding='utf-8'))
 # Independently generated using .NET Aes CBC/PKCS7 and HMACSHA256 in
 # PowerShell: key 00..0f, IV 10..1f, UTF-8 plaintext {"ok":true}.

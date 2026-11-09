@@ -5,6 +5,8 @@ import hmac
 import json
 import re
 
+from Cryptodome.Util.Padding import unpad
+
 from ._aes import decrypt_cbc
 
 
@@ -54,10 +56,7 @@ def decode_response(text: str, key: bytes = None, version: str = 'enc5') -> dict
         raise RuntimeError("Encrypted response authentication failed")
     try:
         padded = decrypt_cbc(key, iv, ciphertext)
-        padding_size = padded[-1]
-        if not 1 <= padding_size <= 16 or padded[-padding_size:] != bytes([padding_size]) * padding_size:
-            raise ValueError('Invalid PKCS7 padding')
-        plain = padded[:-padding_size]
+        plain = unpad(padded, 16)
         decoded = plain.decode('utf-8').rstrip('\x00')
     except (ValueError, UnicodeDecodeError):
         raise RuntimeError("Invalid encrypted response content") from None
