@@ -1,6 +1,6 @@
 # pycomcigan
 
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/hegelty/pycomcigan/python-publish.yml?label=action&logo=github&style=flat-square)](https://github.com/hegelty/pycomcigan/actions)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/hegelty/pycomcigan/python-publish.yml?label=action&logo=github&style=flat-square)](https://github.com/hegelty/pycomcigan/actions) [![Parser Health](https://img.shields.io/github/actions/workflow/status/mchany/pycomcigan/parser-health.yml?branch=master&label=parser%20health&logo=github&style=flat-square)](https://github.com/mchany/pycomcigan/actions/workflows/parser-health.yml)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pycomcigan)](https://pypi.org/project/pycomcigan/)
 [![PyPI](https://img.shields.io/pypi/v/pycomcigan)](https://pypi.org/project/pycomcigan/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/pycomcigan)](https://pypi.org/project/pycomcigan/)
@@ -50,6 +50,12 @@ print(timetable.homeroom(3, 1))
 
 print(timetable)
 ```
+
+## 실서버 파서 상태 검사
+
+`Parser Health` Actions가 한국 시간 매일 0·6·12·18시에 학교 검색과 두 주차
+시간표 파싱을 검사합니다. 수동 실행과 결과 확인 방법은
+[실서버 검사 문서](docs/parser-health.md)를 참고하세요.
 
 ## 라이센스
 
