@@ -1,3 +1,4 @@
+import io
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -43,7 +44,7 @@ def test_http_transport_adds_token_per_request_without_mutating_global_headers()
 
 @pytest.mark.parametrize('status,message', [(403, 'HTTP 403.*token'), (429, 'HTTP 429.*retry later')])
 def test_rejected_request_is_not_decrypted_or_retried(status, message):
-    with patch('pycomcigan.helpers.urlopen', side_effect=HTTPError('http://example.test/data', status, 'rejected', {}, None)) as get, \
+    with patch('pycomcigan.helpers.urlopen', side_effect=HTTPError('http://example.test/data', status, 'rejected', {}, io.BytesIO())) as get, \
          pytest.raises(RuntimeError, match=message) as error:
         get_response_encoding('http://example.test/data', 'UTF-8', TOKEN)
     get.assert_called_once()
@@ -51,7 +52,7 @@ def test_rejected_request_is_not_decrypted_or_retried(status, message):
 
 
 def test_other_http_failure_is_raised_before_json_parsing():
-    response = HTTPError('http://example.test/data', 500, 'Server Error', {}, None)
+    response = HTTPError('http://example.test/data', 500, 'Server Error', {}, io.BytesIO())
     with patch('pycomcigan.helpers.urlopen', side_effect=response), pytest.raises(HTTPError):
         get_response_encoding('http://example.test/data', 'UTF-8', TOKEN)
 
