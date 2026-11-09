@@ -1,4 +1,4 @@
-"""NIST SP 800-38A F.2 CBC vectors, with no padding or third-party modules.
+"""NIST SP 800-38A F.2 CBC vectors, for the native AES adapter, without padding.
 
 https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
 """
