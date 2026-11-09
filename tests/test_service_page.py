@@ -9,6 +9,7 @@ import pytest
 from pycomcigan import TimeTable, get_school_code
 from pycomcigan.search_school import get_comcigan_code
 from pycomcigan.service_page import decode_service_page
+from pycomcigan import service_page
 
 
 # Synthetic wrapper matching the public issue. Test data contains no real names.
@@ -158,3 +159,74 @@ def test_invalid_later_block_is_not_silently_ignored():
 def test_surrogate_pair_can_cross_fragment_boundaries():
     page = wrap([[0, encode('\ud83d', 100)], [0, encode('\ude00', 100)]])
     assert decode_service_page(page) == '<script>😀</script>'
+
+
+def inline_wrapper(source, marker):
+    return obfuscate(source).replace('hour-obfuscated-v2', marker)[8:-9]
+
+
+@pytest.mark.parametrize('depth', [3, 4])
+@pytest.mark.parametrize('first', [0, 1])
+def test_alternating_nested_markers(depth, first):
+    markers = ('hour-obfuscated-v2', 'hour-ajax-obfuscated-v1')
+    source = 'before();' + SOURCE + 'after();'
+    nested = source
+    for i in range(depth):
+        nested = inline_wrapper(nested, markers[(i + first) % 2])
+    assert decode_service_page('<script>' + nested + '</script>') == '<script>' + source + '</script>'
+
+
+def test_rejects_fifth_nested_wrapper_with_marker():
+    nested = 'finished();'
+    for i in range(5):
+        nested = inline_wrapper(nested, ('hour-obfuscated-v2', 'hour-ajax-obfuscated-v1')[i % 2])
+    with pytest.raises(RuntimeError, match='hour-obfuscated-v2.*unresolved marker'):
+        decode_service_page('<script>' + nested + '</script>')
+
+
+def test_many_inline_siblings_are_one_pass():
+    parts = [inline_wrapper(f'f{i}();', ('hour-obfuscated-v2', 'hour-ajax-obfuscated-v1')[i % 2])
+             for i in range(12)]
+    page = '<script>before();' + ''.join(parts) + 'after();</script>'
+    assert decode_service_page(page) == '<script>before();' + ''.join(f'f{i}();' for i in range(12)) + 'after();</script>'
+
+
+@pytest.mark.parametrize('marker', ['hour-obfuscated-v2', 'hour-ajax-obfuscated-v1'])
+def test_broken_wrapper_cannot_borrow_another_script_or_sibling(marker):
+    broken = f'/* {marker} */broken'
+    valid = inline_wrapper('valid();', marker)
+    for page in ('<script>' + broken + '</script><script>' + valid + '</script>',
+                 '<script>' + broken + valid + '</script>'):
+        with pytest.raises(RuntimeError, match=marker):
+            decode_service_page(page)
+
+
+def test_size_limit_applies_to_input_and_fragment_growth(monkeypatch):
+    monkeypatch.setattr(service_page, '_MAX_PAGE_SIZE', 32)
+    assert decode_service_page('x' * 32) == 'x' * 32
+    with pytest.raises(RuntimeError, match='size limit'):
+        decode_service_page('x' * 33)
+    with pytest.raises(RuntimeError, match='size limit'):
+        decode_service_page('한' * 11)
+    with pytest.raises(ValueError, match='size limit'):
+        service_page._decode_script(inline_wrapper('x' * 33, 'hour-obfuscated-v2'))
+    with pytest.raises(ValueError, match='size limit'):
+        service_page._decode_script(wrap([[1, 'x' * 17], [1, 'y' * 16]])[8:-9])
+
+
+def test_size_limit_applies_to_reconstructed_page(monkeypatch):
+    page = '<script>' + inline_wrapper('x' * 20, 'hour-obfuscated-v2') + '</script>'
+    monkeypatch.setattr(service_page, '_MAX_PAGE_SIZE', len(page))
+    # A patched decoder simulates growth, which otherwise is constrained by the
+    # size of literal wrapper arguments on the input page.
+    monkeypatch.setattr(service_page, '_decode_script', lambda script, budget: 'x' * (budget + 1))
+    with pytest.raises(RuntimeError, match='size limit'):
+        decode_service_page(page)
+
+
+def test_size_limit_applies_to_multibyte_reconstructed_page(monkeypatch):
+    page = '<script>' + inline_wrapper('x', 'hour-obfuscated-v2') + '</script>'
+    monkeypatch.setattr(service_page, '_MAX_PAGE_SIZE', len(page))
+    monkeypatch.setattr(service_page, '_decode_script', lambda script, budget: '한' * (budget // 2))
+    with pytest.raises(RuntimeError, match='size limit'):
+        decode_service_page(page)
