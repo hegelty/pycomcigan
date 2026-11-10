@@ -34,3 +34,46 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
         run: poetry run python -m scripts.check_live_parser
+
+  report-failure:
+    needs: live-parser
+    if: >-
+      ${{ failure() && needs.live-parser.result == 'failure' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue for a failed parser health check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const marker = '<!-- pycomcigan:parser-health-failure -->';
+            const { owner, repo } = context.repo;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100,
+            });
+            const existing = issues.find(issue =>
+              !issue.pull_request && (issue.body || '').includes(marker)
+            );
+            if (existing) {
+              core.info(`Open parser health issue already exists: #${existing.number}`);
+              return;
+            }
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner, repo,
+              title: '[Parser Health] 자동 검사 실패',
+              body: [
+                marker,
+                '기본 브랜치의 Parser Health 워크플로가 실패했습니다.',
+                '',
+                `- 실행 결과: ${runUrl}`,
+                `- 검사 커밋: ${context.sha}`,
+                '',
+                '실행 로그와 Actions 요약에서 실패 단계를 확인하세요.',
+                '네트워크·서버 장애, 시간표 미게시, 설치·회귀 테스트 실패도 원인일 수 있습니다.',
+                '토큰·암호 키·응답 원문·교사명·과목명을 이슈에 붙여 넣지 마세요.',
+              ].join('\n'),
+            });
