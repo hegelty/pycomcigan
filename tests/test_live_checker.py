@@ -1,9 +1,10 @@
 """실서버 상태 검사기의 실패 판정과 로그 노출 방지를 검증한다."""
 
 from copy import deepcopy
+import io
+from urllib.error import HTTPError, URLError
 
 import pytest
-from requests.exceptions import Timeout
 
 from scripts import check_live_parser as checker
 
@@ -70,12 +71,21 @@ def test_unpublished_response_fails_validation():
         checker.validate_timetable({}, [5000, 'region', 'school', 123], ('',) * 7)
 
 
-def test_main_reports_failure_without_exception_content(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize('error,detail', [
+    (URLError('private-token-and-response'), 'network error or timeout'),
+    (TimeoutError('private-token-and-response'), 'network error or timeout'),
+    (OSError('private-token-and-response'), 'network error or timeout'),
+    (HTTPError('http://example.test/private-token-and-response', 500,
+               'private-token-and-response', {}, io.BytesIO()), 'HTTP error (500)'),
+], ids=['url-error', 'timeout', 'os-error', 'http-error'])
+def test_main_reports_failure_without_exception_content(monkeypatch, tmp_path, capsys, error, detail):
     """
     역할: 네트워크 실패가 재시도 없이 실패 코드로 기록되고 원문이 숨겨지는지 확인한다.
     입력: 토큰을 흉내 낸 예외와 임시 Actions 요약 경로.
     출력: 실패 코드와 단계 요약을 확인하고 예외 내용의 노출을 거부한다.
     """
+    if isinstance(error, HTTPError):
+        error.close()
     calls = []
     def fail(report):
         """
@@ -85,14 +95,14 @@ def test_main_reports_failure_without_exception_content(monkeypatch, tmp_path, c
         """
         calls.append(1)
         checker.begin_step(report, 'Service page and protocol')
-        raise Timeout('private-token-and-response')
+        raise error
     summary = tmp_path / 'summary.md'
     monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
     monkeypatch.setattr(checker, 'check_live', fail)
     assert checker.main() == 1
     assert calls == [1]
     text = summary.read_text(encoding='utf-8')
-    assert '| FAIL | network error or timeout |' in text
+    assert f'| FAIL | {detail} |' in text
     assert 'private-token-and-response' not in text + capsys.readouterr().out
 
 

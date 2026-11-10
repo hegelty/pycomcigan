@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 import os
 from pathlib import Path
 
-from requests.exceptions import RequestException
+from urllib.error import HTTPError, URLError
 
 from pycomcigan.helpers import get_comcigan_response_for_codes, school_search
 from pycomcigan.service_page import decode_service_page
@@ -122,10 +122,9 @@ def failure_detail(error):
     입력: 검사 중 발생한 예외.
     출력: 고정된 오류 분류 문자열.
     """
-    if isinstance(error, RequestException):
-        status = getattr(getattr(error, 'response', None), 'status_code', None)
-        if type(status) is int:
-            return f'HTTP error ({status})'
+    if isinstance(error, HTTPError):
+        return f'HTTP error ({error.code})'
+    if isinstance(error, (URLError, OSError)):
         return 'network error or timeout'
     if isinstance(error, RuntimeError):
         if 'HTTP 403' in str(error):
