@@ -21,6 +21,18 @@ HEADERS = {
 KOR_ENC = 'cp949'
 
 
+def decode_text(value, key):
+    if key is None or value is None:
+        return value
+    if not isinstance(value, str):
+        raise RuntimeError('Invalid Comcigan encoded text')
+    try:
+        encoded = base64.b64decode(value, validate=True)
+        return bytes(b ^ key[i % len(key)] for i, b in enumerate(encoded)).decode(KOR_ENC)
+    except (ValueError, UnicodeError) as error:
+        raise RuntimeError('Invalid Comcigan encoded text') from error
+
+
 @dataclass(frozen=True)
 class _Response:
     """The response fields consumed by this library."""
@@ -103,10 +115,19 @@ def school_search(school_name: str, comcigan_code: str, protocol: ServiceProtoco
                 or row[0] < 0):
             raise RuntimeError('Invalid Comcigan school search row')
         # Search responses include an "알림" footer, not a selectable school.
-        if row[0] == 0 and len(row) == 4 and row[3] == 0:
+        if row[0] == 0:
             continue
         column = row[0] // protocol.school_divisor + protocol.school_offset
-        if not 3 <= column < len(row) or type(row[column]) is not int:
+        if not 3 <= column < len(row):
             raise RuntimeError('Invalid Comcigan school code column')
-        results.append(row[:3] + [row[column]])
+        if protocol.text_key is None:
+            if type(row[column]) is not int:
+                raise RuntimeError('Invalid Comcigan school code column')
+            results.append(row[:3] + [row[column]])
+        else:
+            code = decode_text(row[column], protocol.text_key)
+            if not isinstance(code, str) or not code.isascii() or not code.isdigit():
+                raise RuntimeError('Invalid Comcigan school code column')
+            results.append([row[0], decode_text(row[1], protocol.text_key),
+                            decode_text(row[2], protocol.text_key), int(code)])
     return results
