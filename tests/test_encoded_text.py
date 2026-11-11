@@ -49,3 +49,12 @@ def test_encoded_timetable_fields_are_decoded():
 def test_invalid_encoded_text_fails():
     with pytest.raises(RuntimeError, match='encoded text'):
         decode_text('not base64!', KEY)
+
+
+def test_null_school_code_raises_runtime_error():
+    protocol = parse_service_protocol(NEW_PAGE)
+    rows = [[5000, encode('서울'), encode('학교'), None]]
+    with patch('pycomcigan.helpers.get_response_encoding', return_value=SimpleNamespace(text='response')), \
+         patch('pycomcigan.helpers.decode_response', return_value={'학교검색': rows}), \
+         pytest.raises(RuntimeError, match='school code column'):
+        school_search('학교', protocol.endpoint, protocol)

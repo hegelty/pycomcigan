@@ -126,7 +126,7 @@ def school_search(school_name: str, comcigan_code: str, protocol: ServiceProtoco
             results.append(row[:3] + [row[column]])
         else:
             code = decode_text(row[column], protocol.text_key)
-            if not code.isascii() or not code.isdigit():
+            if not isinstance(code, str) or not code.isascii() or not code.isdigit():
                 raise RuntimeError('Invalid Comcigan school code column')
             results.append([row[0], decode_text(row[1], protocol.text_key),
                             decode_text(row[2], protocol.text_key), int(code)])
