@@ -11,6 +11,7 @@ from .helpers import (
 from .service_page import decode_service_page
 from .service_protocol import parse_service_protocol
 from .encrypted_response import decode_response
+from .encoded_fields import decode_timetable_fields
 
 
 class Lecture:
@@ -118,7 +119,7 @@ class TimeTable:
             # Keep the wrappers optional for compatibility with older pages.
             'teacher data': r'성명\s*=\s*(?:Q성명\(\s*)?자료\.자료(\d+)',
             'subject data': r'(?:과목명\s*=\s*(?:Q과목명\(\s*)?)?자료\.자료(\d+)\[sb\]',
-            'update data': r'=\s*H시간표\.자료(\d+)',
+            'update data': r'=\s*(?:QnmsbChange\(\s*)?H시간표\.자료(\d+)',
             'current timetable': r'일일자료\s*=\s*Q자료\(\s*자료\.자료(\d+)',
             'original timetable': r'원자료\s*=\s*Q자료\(\s*자료\.자료(\d+)'
         }
@@ -169,8 +170,9 @@ class TimeTable:
             response = get_response_encoding(request_url, 'UTF-8')
 
         # Authenticate encrypted responses before parsing their JSON payload.
-        return decode_response(response.text, protocol.key if protocol else None,
+        data = decode_response(response.text, protocol.key if protocol else None,
                                protocol.version if protocol else 'enc5')
+        return decode_timetable_fields(data, comcigan_codes, protocol)
 
     def _initialize_from_data(self, data: dict, local_code: int, school_name: str, school_code: int,
                               comcigan_codes: Tuple) -> None:

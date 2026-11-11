@@ -3,6 +3,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .encoded_fields import parse_field_encoding
+
 
 @dataclass
 class ServiceProtocol:
@@ -12,6 +14,9 @@ class ServiceProtocol:
     school_divisor: Optional[int] = None
     school_offset: int = 0
     request_token: Optional[str] = field(default=None, repr=False)
+    text_key: Optional[bytes] = field(default=None, repr=False)
+    start_date_field: Optional[str] = None
+    period_times_field: Optional[str] = None
 
 
 def parse_service_protocol(content: str) -> ServiceProtocol:
@@ -94,5 +99,7 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if (column is None or int(column.group(1)) <= 0
             or not 0 <= int(column.group(2)) <= 64):
         raise RuntimeError('Unable to parse Comcigan school code column')
+    text_key, start_date_field, period_times_field = parse_field_encoding(content)
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
-                           int(column.group(1)), int(column.group(2)), request_token)
+                           int(column.group(1)), int(column.group(2)), request_token,
+                           text_key, start_date_field, period_times_field)
