@@ -1,4 +1,5 @@
 import base64
+import re
 from dataclasses import dataclass
 from typing import List
 from urllib import parse
@@ -7,6 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .encrypted_response import decode_response
+from .encoded_fields import decode_field
 from .service_protocol import ServiceProtocol
 
 # Constants for Comcigan API
@@ -103,10 +105,25 @@ def school_search(school_name: str, comcigan_code: str, protocol: ServiceProtoco
                 or row[0] < 0):
             raise RuntimeError('Invalid Comcigan school search row')
         # Search responses include an "알림" footer, not a selectable school.
-        if row[0] == 0 and len(row) == 4 and row[3] == 0:
-            continue
+        if row[0] == 0 and len(row) == 4:
+            footer_code = row[3]
+            if protocol.text_key is not None and isinstance(footer_code, str):
+                footer_code = decode_field(footer_code, protocol.text_key)
+            if footer_code in (0, '0'):
+                continue
         column = row[0] // protocol.school_divisor + protocol.school_offset
-        if not 3 <= column < len(row) or type(row[column]) is not int:
+        if not 3 <= column < len(row):
             raise RuntimeError('Invalid Comcigan school code column')
-        results.append(row[:3] + [row[column]])
+        region, name, school_code = row[1], row[2], row[column]
+        if protocol.text_key is not None:
+            region = decode_field(region, protocol.text_key)
+            name = decode_field(name, protocol.text_key)
+            if isinstance(school_code, str):
+                school_code = decode_field(school_code, protocol.text_key)
+                if re.fullmatch(r'[0-9]+', school_code) is None:
+                    raise RuntimeError('Invalid Comcigan school code column')
+                school_code = int(school_code)
+        if type(school_code) is not int:
+            raise RuntimeError('Invalid Comcigan school code column')
+        results.append([row[0], region, name, school_code])
     return results
