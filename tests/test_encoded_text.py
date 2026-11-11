@@ -34,10 +34,11 @@ def test_encoded_school_search_and_metadata():
 
 def test_encoded_timetable_fields_are_decoded():
     protocol = parse_service_protocol(NEW_PAGE)
-    data = {'자료143': encode('2026-11-09'), '자료130': ['09:00'],
+    data = {'지역명': encode('서울'), '자료143': encode('2026-11-09'), '자료130': ['09:00'],
             '자료108': encode('2026-11-10'), '자료119': [encode(''), encode('김*')],
             '자료123': [0, encode('수학')]}
     TimeTable._decode_timetable_text(data, ('', '', '119', '123', '108', '', ''), protocol)
+    assert data['지역명'] == '서울'
     assert data['시작일'] == '2026-11-09'
     assert data['일과시간'] == ['09:00']
     assert data['자료108'] == '2026-11-10'

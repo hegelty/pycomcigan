@@ -96,6 +96,7 @@ class TimeTable:
     @staticmethod
     def _decode_timetable_text(data, codes, protocol):
         key = protocol.text_key
+        data['지역명'] = decode_text(data['지역명'], key)
         data['시작일'] = decode_text(data[protocol.start_field], key)
         data['일과시간'] = data[protocol.periods_field]
         data['자료' + codes[4]] = decode_text(data['자료' + codes[4]], key)
