@@ -7,6 +7,7 @@ from .helpers import (
     get_comcigan_response_for_codes,
     get_response_encoding,
     school_search,
+    decode_text,
 )
 from .service_page import decode_service_page
 from .service_protocol import parse_service_protocol
@@ -93,6 +94,16 @@ class TimeTable:
         )
 
     @staticmethod
+    def _decode_timetable_text(data, codes, protocol):
+        key = protocol.text_key
+        data['시작일'] = decode_text(data[protocol.start_field], key)
+        data['일과시간'] = data[protocol.periods_field]
+        data['자료' + codes[4]] = decode_text(data['자료' + codes[4]], key)
+        for code in (codes[2], codes[3]):
+            field = '자료' + code
+            data[field] = [decode_text(value, key) if isinstance(value, str) else value for value in data[field]]
+
+    @staticmethod
     def _validate_inputs(week_num: int, local_code: int, school_code: int) -> Tuple[int, int]:
         """Validate input parameters."""
         if week_num not in [0, 1]:
@@ -118,7 +129,7 @@ class TimeTable:
             # Keep the wrappers optional for compatibility with older pages.
             'teacher data': r'성명\s*=\s*(?:Q성명\(\s*)?자료\.자료(\d+)',
             'subject data': r'(?:과목명\s*=\s*(?:Q과목명\(\s*)?)?자료\.자료(\d+)\[sb\]',
-            'update data': r'=\s*H시간표\.자료(\d+)',
+            'update data': r'=\s*(?:QnmsbChange\(\s*)?H시간표\.자료(\d+)',
             'current timetable': r'일일자료\s*=\s*Q자료\(\s*자료\.자료(\d+)',
             'original timetable': r'원자료\s*=\s*Q자료\(\s*자료\.자료(\d+)'
         }
@@ -169,8 +180,11 @@ class TimeTable:
             response = get_response_encoding(request_url, 'UTF-8')
 
         # Authenticate encrypted responses before parsing their JSON payload.
-        return decode_response(response.text, protocol.key if protocol else None,
+        data = decode_response(response.text, protocol.key if protocol else None,
                                protocol.version if protocol else 'enc5')
+        if protocol and protocol.text_key:
+            TimeTable._decode_timetable_text(data, comcigan_codes, protocol)
+        return data
 
     def _initialize_from_data(self, data: dict, local_code: int, school_name: str, school_code: int,
                               comcigan_codes: Tuple) -> None:

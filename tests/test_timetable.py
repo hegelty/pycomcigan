@@ -74,6 +74,14 @@ def test_get_comcigan_codes_reports_changed_page_structure():
         TimeTable._get_comcigan_codes()
 
 
+def test_get_comcigan_codes_supports_wrapped_update_data():
+    page = BASE_PAGE.format(
+        teacher_expression="성명=자료.자료446[th];",
+        subject_expression="과목명=자료.자료492[sb];",
+    ).replace('da1 = H시간표.자료244;', "da1 = QnmsbChange(H시간표.자료244) || '0';")
+    assert TimeTable._get_comcigan_codes(page)[4] == '244'
+
+
 def test_create_period_data_decodes_marked_string_values():
     teachers = [""] * 124
     teachers[122] = "original teacher"

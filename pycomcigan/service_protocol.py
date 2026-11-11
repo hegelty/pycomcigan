@@ -12,6 +12,9 @@ class ServiceProtocol:
     school_divisor: Optional[int] = None
     school_offset: int = 0
     request_token: Optional[str] = field(default=None, repr=False)
+    text_key: Optional[bytes] = field(default=None, repr=False)
+    start_field: Optional[str] = None
+    periods_field: Optional[str] = None
 
 
 def parse_service_protocol(content: str) -> ServiceProtocol:
@@ -94,5 +97,24 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if (column is None or int(column.group(1)) <= 0
             or not 0 <= int(column.group(2)) <= 64):
         raise RuntimeError('Unable to parse Comcigan school code column')
+    text_key = None
+    if re.search(r'function\s+QnmsbChange\s*\(', content):
+        key = re.search(r'function\s+QnmsbChange\s*\([^)]*\)\s*\{[^{}]*?String\.fromCharCode\(\s*([\d\s,]+)\)', content)
+        if key is None:
+            raise RuntimeError('Unable to parse Comcigan text decoding key')
+        try:
+            text_key = bytes(int(n.strip()) for n in key.group(1).split(','))
+        except ValueError as error:
+            raise RuntimeError('Invalid Comcigan text decoding key') from error
+        if not text_key:
+            raise RuntimeError('Invalid Comcigan text decoding key')
+    start_field = periods_field = None
+    if text_key:
+        start = re.search(r'new\s+Date\(\s*QnmsbChange\(\s*자료\.(자료\d+)\s*\)\s*\)', content)
+        periods = re.search(r'자료\.(자료\d+)\s*\[\s*교시\s*-\s*1\s*\]', content)
+        if not start or not periods:
+            raise RuntimeError('Unable to parse Comcigan timetable metadata fields')
+        start_field, periods_field = start.group(1), periods.group(1)
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
-                           int(column.group(1)), int(column.group(2)), request_token)
+                           int(column.group(1)), int(column.group(2)), request_token, text_key,
+                           start_field, periods_field)
