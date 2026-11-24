@@ -1,16 +1,25 @@
 """Synthetic coverage for the November 2026 QnmsbChange field format."""
 
+import base64
 from copy import deepcopy
+import hashlib
+import hmac
 import json
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.parse import unquote, urlsplit
 
 import pytest
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad
 
 from pycomcigan import TimeTable, get_school_code
 from pycomcigan.encoded_fields import decode_field, decode_timetable_fields
+from pycomcigan.encrypted_response import decode_response
 from pycomcigan.service_protocol import parse_service_protocol
 from test_request_transport import TOKEN, TOKEN_PAGE
+from test_service_page import obfuscate
+from test_service_protocol import KEY
 
 
 FIELD_KEY = b'Key1'
@@ -54,7 +63,7 @@ def test_protocol_reads_literal_key_and_metadata_fields():
     assert protocol.period_times_field == '자료902'
     assert 'text_key' not in repr(protocol)
     assert TOKEN not in repr(protocol)
-    assert TimeTable._get_comcigan_codes(PAGE)[4] == '108'
+    assert TimeTable._get_comcigan_codes(PAGE)[4] == '자료108'
     changed = PAGE.replace('75,101,121,49', '51,52,53').replace('자료901', '자료777').replace('자료902', '자료778')
     protocol = parse_service_protocol(changed)
     assert protocol.text_key == b'345'
@@ -149,3 +158,49 @@ def test_failed_envelope_authentication_never_reaches_field_decoding():
          pytest.raises(RuntimeError, match='authentication failed'):
         TimeTable._fetch_timetable_data(123, 0, codes, protocol)
     decode.assert_not_called()
+
+
+def test_numeric_protocol_with_renamed_functions_and_fields():
+    # Repeat the published page's structure using synthetic identifiers and keys.
+    field_names = dict(zip(
+        ('자료119', '자료123', '자료108', '자료158', '자료167', '자료901', '자료902'),
+        ('Aa101', 'Bb102', 'Cc103', 'Dd104', 'Ee105', 'Ff106', 'Gg107'),
+    ))
+    page = (
+        PAGE.replace('QAjaxSchool', 'findSchool7')
+        .replace('QAjaxTimetable', 'requestTable8')
+        .replace('QnmsbChange', 'textDecode9')
+        .replace('sc_data', 'loadTable1')
+        .replace('_enc5', '_4317')
+        .replace("btoa(sc+sc2+", "btoa(prefix+")
+        .replace("success) {\nreturn $.ajax", "success) {\nvar prefix=sc+sc2;\nreturn $.ajax")
+        + '\nfunction loadTable1(sc, sc2, r, nw) {'
+          "var da1='0';requestTable8(sc, sc2, da1, r, function(data) {});}"
+    )
+    for original, replacement in field_names.items():
+        page = page.replace(original, replacement)
+
+    def numeric_response(fixture_name):
+        data = decode_response(FIXTURES[fixture_name], KEY)
+        data = {field_names.get(name, name): value for name, value in data.items()}
+        iv = bytes(range(16))
+        ciphertext = AES.new(KEY, AES.MODE_CBC, iv=iv).encrypt(pad(json.dumps(data).encode(), 16))
+        parts = ['4317', *(base64.b64encode(part).decode('ascii') for part in (iv, ciphertext))]
+        head = ':'.join(parts)
+        tag = hmac.new(hashlib.sha256(KEY).digest(), head.encode(), hashlib.sha256).digest()
+        return f"{head}:{base64.b64encode(tag).decode('ascii')}"
+
+    with patch('pycomcigan.helpers.urlopen', side_effect=[
+        response(obfuscate(page), 'cp949'),
+        response(numeric_response('search')),
+        response(numeric_response('timetable')),
+    ]) as get:
+        table = TimeTable('테스트고', school_code=123, week_num=1)
+
+    assert (table.start_date, table.update_date) == ('2026-11-09', '2026-11-11 12:34:56')
+    assert table.day_time == ['09:00']
+    lesson = table.timetable[1][1][1][0]
+    assert (lesson.teacher, lesson.subject) == ('교사', '수학')
+    request = get.call_args.args[0]
+    assert base64.b64decode(unquote(urlsplit(request.full_url).query)).decode() == '107225_123_0_2_4317'
+    assert request.get_header('X-hour-token') == TOKEN

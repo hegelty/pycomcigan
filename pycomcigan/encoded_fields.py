@@ -1,12 +1,14 @@
-"""Decode the literal QnmsbChange field format without running JavaScript."""
+"""Decode Comcigan's literal text field format without running JavaScript."""
 
 import base64
 import binascii
 import re
 
 
+DATA_FIELD = r'(?:자료[0-9]+|[A-Za-z_$][\w$]*)'
+
 _DECODER = re.compile(
-    r'function\s+QnmsbChange\s*\(\s*(?P<value>[\w$]+)\s*\)\s*\{\s*'
+    r'\bfunction\s+(?P<name>[\w$]+)\s*\(\s*(?P<value>[\w$]+)\s*\)\s*\{\s*'
     r'if\s*\(\s*(?P=value)\s*==\s*undefined\s*\|\|\s*'
     r'(?P=value)\s*===\s*(?:\'\'|"")\s*\)\s*return\s*(?:\'\'|"")\s*;\s*'
     r'var\s+(?P<key>[\w$]+)\s*=\s*String\.fromCharCode\(\s*'
@@ -24,22 +26,23 @@ _DECODER = re.compile(
 )
 
 
-def parse_field_encoding(content):
+def parse_field_encoding(content, required=False):
     """Accept only the known decoder and literal byte key and field references."""
-    if re.search(r'\bQnmsbChange\s*\(', content) is None:
-        return None, None, None
     match = _DECODER.search(content)
     if match is None:
-        raise RuntimeError('Unable to parse Comcigan text field decoder')
+        if required or re.search(r'\bQnmsbChange\s*\(', content):
+            raise RuntimeError('Unable to parse Comcigan text field decoder')
+        return None, None, None
     numbers = match.group('numbers').split(',')
     if len(numbers) > 256 or any(int(number) > 255 for number in numbers):
         raise RuntimeError('Invalid Comcigan text field key')
     key = bytes(int(number) for number in numbers)
+    decoder = re.escape(match.group('name'))
     dates = set(re.findall(
-        r'new\s+Date\(\s*QnmsbChange\(\s*자료\.(자료[0-9]+)\s*\)\s*\)', content,
+        rf'new\s+Date\(\s*{decoder}\(\s*자료\.({DATA_FIELD})\s*\)\s*\)', content,
     ))
     periods = set(re.findall(
-        r'자료\.(자료[0-9]+)\[\s*교시\s*-\s*1\s*\]', content,
+        rf'자료\.({DATA_FIELD})\[\s*교시\s*-\s*1\s*\]', content,
     ))
     if len(dates) != 1 or len(periods) != 1:
         raise RuntimeError('Unable to parse Comcigan date or period-time fields')
@@ -67,15 +70,15 @@ def decode_timetable_fields(data, codes, protocol):
         return data
     decoded = dict(data)
     try:
-        for field in ('자료' + codes[2], '자료' + codes[3]):
+        for field in (codes[2], codes[3]):
             if not isinstance(data[field], list):
                 raise ValueError
             decoded[field] = [
-                '' if field == '자료' + codes[3] and index == 0
+                '' if field == codes[3] and index == 0
                 else decode_field(value, protocol.text_key)
                 for index, value in enumerate(data[field])
             ]
-        for field in ('지역명', '자료' + codes[4], protocol.start_date_field):
+        for field in ('지역명', codes[4], protocol.start_date_field):
             decoded[field] = decode_field(data[field], protocol.text_key)
         if '학교명' in data:
             decoded['학교명'] = decode_field(data['학교명'], protocol.text_key)
