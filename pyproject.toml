@@ -1,10 +1,6 @@
 [tool.poetry]
 name = "pycomcigan"
-<<<<<<< HEAD
 version = "1.4.7"
-=======
-version = "1.4.7"
->>>>>>> 010754f (chore: bump version to 1.4.7)
 description = "컴시간알리미 시간표 파싱 라이브러리입니다."
 authors = ["hegelty <dev@hegelty.me>"]
 readme = "README.md"
