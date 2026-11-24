@@ -114,9 +114,20 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if len(key_hex) not in (32, 48, 64):
         raise RuntimeError('Invalid Comcigan response key size')
 
-    column = re.search(r'Math\.floor\(학교명단\[i\]\[0\]\s*/\s*(\d+)\)\s*\+\s*(\d+)', content)
-    if (column is None or int(column.group(1)) <= 0
-            or not 0 <= int(column.group(2)) <= 64):
+    # Read the school-list formulas, not similar arithmetic for unrelated lists.
+    column_suffix = r'\s*\[i\]\s*\[0\]\s*/\s*(\d+)\s*\)\s*\+\s*(\d+)'
+    column_prefix = r'Math\.floor\(\s*'
+    columns = set(re.findall(
+        column_prefix + r'(?:학교명단|H?학교명단\s*\.\s*학교검색)' + column_suffix, content,
+    ))
+    for name, section in functions:
+        if name == '학교명단_출력하기':
+            columns.update(re.findall(column_prefix + 'data' + column_suffix, section))
+    values = {(int(divisor), int(offset)) for divisor, offset in columns}
+    if len(values) != 1:
+        raise RuntimeError('Unable to parse Comcigan school code column')
+    school_divisor, school_offset = values.pop()
+    if school_divisor <= 0 or not 0 <= school_offset <= 64:
         raise RuntimeError('Unable to parse Comcigan school code column')
     text_key, start_date_field, period_times_field = parse_field_encoding(content, required=version.isdecimal())
     # Look up the caller which forwards the four timetable arguments, and
@@ -131,5 +142,5 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if len(prefixes) > 1:
         raise RuntimeError('Conflicting Comcigan timetable request prefixes')
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
-                           int(column.group(1)), int(column.group(2)), request_token,
+                           school_divisor, school_offset, request_token,
                            text_key, start_date_field, period_times_field, next(iter(prefixes), None))
