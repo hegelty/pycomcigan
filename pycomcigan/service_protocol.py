@@ -114,7 +114,14 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if len(key_hex) not in (32, 48, 64):
         raise RuntimeError('Invalid Comcigan response key size')
 
-    column = re.search(r'Math\.floor\(학교명단\[i\]\[0\]\s*/\s*(\d+)\)\s*\+\s*(\d+)', content)
+    # Comcigan renamed the school list from a bare array (학교명단[i][0])
+    # to the nested search payload (학교명단.학교검색[i][0]) on 2026-11-24,
+    # and changed the divisor 5000 -> 6347. The live page now spells the
+    # same formula two ways — Math.floor(data[i][0]/6347)+2 inside
+    # 학교명단_출력하기(data) and Math.floor(H학교명단.학교검색[i][0]/6347)+2
+    # inside sc_disp — so match the column formula by structure (any
+    # identifier chain ending in [i][0]) rather than by variable name.
+    column = re.search(r'Math\.floor\((?:[\w$]+(?:\.[\w$]+)*)\[i\]\[0\]\s*/\s*(\d+)\)\s*\+\s*(\d+)', content)
     if (column is None or int(column.group(1)) <= 0
             or not 0 <= int(column.group(2)) <= 64):
         raise RuntimeError('Unable to parse Comcigan school code column')
