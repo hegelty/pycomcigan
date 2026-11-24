@@ -34,6 +34,18 @@ def test_latest_protocol_extracts_page_values():
     assert TimeTable._get_comcigan_codes(PAGE) == (protocol.endpoint,) + CODES[1:]
 
 
+def test_nested_school_list_spelling_with_new_divisor():
+    # Live page 2026-11-24: 학교명단[i][0] -> 학교명단.학교검색[i][0],
+    # divisor 5000 -> 6347. The live page spells the same formula as
+    # data[i][0] (학교명단_출력하기's parameter) and as
+    # H학교명단.학교검색[i][0] (sc_disp). All spellings must parse.
+    for spelling in ('학교명단.학교검색[i][0]/6347',
+                     'H학교명단.학교검색[i][0]/6347',
+                     'data[i][0]/6347'):
+        protocol = parse_service_protocol(PAGE.replace('학교명단[i][0]/5000', spelling))
+        assert (protocol.school_divisor, protocol.school_offset) == (6347, 2)
+
+
 def test_protocol_supports_literal_key_and_rejects_executable_key():
     expression = "(function(a){return a[1]+a[0];})(['8899aabbccddeeff','0011223344556677'])"
     assert parse_service_protocol(PAGE.replace(expression, "'" + KEY.hex() + "'")).key == KEY
