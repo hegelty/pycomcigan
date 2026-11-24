@@ -49,16 +49,17 @@ def test_version_mismatch():
         decode_response(VECTOR, KEY, version='enc6')
 
 
-@pytest.mark.parametrize('version', ['enc2', 'enc6', 'enc9'])
+@pytest.mark.parametrize('version', ['enc2', 'enc6', 'enc9', '4317'])
 def test_other_version_envelopes(version):
     assert decode_response(envelope(b'{"n":1}', version), KEY, version=version) == {'n': 1}
     assert decode_response(envelope(b'{"n":1}', 'enc1'), KEY, version=version) == {'n': 1}
 
 
-def test_spoofed_prefix_rejected():
-    spoofed = VECTOR.replace('enc5:', 'enc6:', 1)
+@pytest.mark.parametrize('version', ['enc6', '4317'])
+def test_spoofed_prefix_rejected(version):
+    spoofed = VECTOR.replace('enc5:', version + ':', 1)
     with pytest.raises(RuntimeError, match='authentication'):
-        decode_response(spoofed, KEY, version='enc6')
+        decode_response(spoofed, KEY, version=version)
 
 
 @pytest.mark.parametrize('version', ['', 'enc', 'enc-1', 'enc5x', 'ENC5', 'enc５',

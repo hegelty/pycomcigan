@@ -45,8 +45,8 @@ def validate_timetable(data, school, codes):
     입력: 복호화된 응답, 정규화된 학교 행, 페이지에서 추출한 자료 코드.
     출력: 시작일과 학급·수업 수를 담은 요약이며 비정상 구조는 오류로 처리한다.
     """
-    current = validate_raw_timetable(data['자료' + codes[5]])
-    original = validate_raw_timetable(data['자료' + codes[6]])
+    current = validate_raw_timetable(data[codes[5]])
+    original = validate_raw_timetable(data[codes[6]])
     if current != original:
         raise ValueError('inconsistent timetable class or day structure')
     table = TimeTable.__new__(TimeTable)

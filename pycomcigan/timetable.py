@@ -11,7 +11,7 @@ from .helpers import (
 from .service_page import decode_service_page
 from .service_protocol import parse_service_protocol
 from .encrypted_response import decode_response
-from .encoded_fields import decode_timetable_fields
+from .encoded_fields import DATA_FIELD, decode_timetable_fields
 
 
 class Lecture:
@@ -111,20 +111,25 @@ class TimeTable:
             content = decode_service_page(get_comcigan_response_for_codes().text)
 
         # Comcigan periodically renames the JSON fields embedded in this page.
-        # Capture the numeric portions instead of slicing whole regex matches so
-        # small JavaScript wrapper changes do not break the parser.
+        # Read the field names at their use sites, including the older 자료NNN
+        # names and optional text decoder calls.
+        protocol = parse_service_protocol(content)
+        prefix = protocol.timetable_prefix
+        if prefix is None:
+            legacy_call = re.search(r"\bsc_data\(\s*'([0-9]+)_", content)
+            if legacy_call is None or (protocol.version and protocol.version.isdecimal()):
+                raise RuntimeError('Unable to parse Comcigan timetable request prefix')
+            prefix = legacy_call.group(1)
+        wrapper = r'(?:[\w$]+\s*\(\s*)?'
         patterns = {
-            'school request': r"sc_data\(\s*'(\d+)_",
-            # Q성명/Q과목명 were added to the service page in May 2026.
-            # Keep the wrappers optional for compatibility with older pages.
-            'teacher data': r'성명\s*=\s*(?:Q성명\(\s*)?자료\.자료(\d+)',
-            'subject data': r'(?:과목명\s*=\s*(?:Q과목명\(\s*)?)?자료\.자료(\d+)\[sb\]',
-            'update data': r'=\s*(?:QnmsbChange\(\s*)?H시간표\.자료(\d+)',
-            'current timetable': r'일일자료\s*=\s*Q자료\(\s*자료\.자료(\d+)',
-            'original timetable': r'원자료\s*=\s*Q자료\(\s*자료\.자료(\d+)'
+            'teacher data': rf'\b성명\s*=\s*{wrapper}자료\.({DATA_FIELD})\s*\[\s*th\s*\]',
+            'subject data': rf'자료\.({DATA_FIELD})\s*\[\s*sb\s*\]',
+            'update data': rf'\bda1\s*=\s*{wrapper}H시간표\.({DATA_FIELD})',
+            'current timetable': rf'\b일일자료\s*=\s*Q자료\(\s*자료\.({DATA_FIELD})',
+            'original timetable': rf'\b원자료\s*=\s*Q자료\(\s*자료\.({DATA_FIELD})',
         }
 
-        codes = [parse_service_protocol(content).endpoint]
+        codes = [protocol.endpoint, prefix]
         for name, pattern in patterns.items():
             match = re.search(pattern, content)
             if match is None:
@@ -187,14 +192,14 @@ class TimeTable:
         self.school_year = data["학년도"]
         self.start_date = data["시작일"]
         self.day_time = data["일과시간"]
-        self.update_date = data["자료" + code3]
+        self.update_date = data[code3]
 
         # Process teacher and subject lists
         teacher_list = [
             self._format_teacher_name(name)
-            for name in data["자료" + code1]
+            for name in data[code1]
         ]
-        subject_list = list(data["자료" + code2])
+        subject_list = list(data[code2])
         subject_list[0] = ""
 
         # Build timetable data structure
@@ -212,8 +217,8 @@ class TimeTable:
                          subject_divisor: int, change_notifications: bool) -> \
             List[List[List[List[TimeTableData]]]]:
         """Build the complete timetable data structure."""
-        original_timetable = data["자료" + code5]
-        current_timetable = data["자료" + code4]
+        original_timetable = data[code5]
+        current_timetable = data[code4]
         timetable = []
 
         for grade_idx, grade_data in enumerate(current_timetable):
