@@ -51,11 +51,11 @@ def test_get_comcigan_codes_supports_legacy_and_wrapped_fields(
         assert TimeTable._get_comcigan_codes() == (
             "/36179?17384l",
             "73629",
-            "446",
-            "492",
-            "244",
-            "147",
-            "481",
+            "자료446",
+            "자료492",
+            "자료244",
+            "자료147",
+            "자료481",
         )
 
 
