@@ -29,7 +29,7 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     request = re.search(
         r"function\s+QAjaxSchool\s*\([^)]*\)\s*\{(?:(?!\bfunction\b).)*?"
         r"url\s*:\s*'\.(/\d+)\?'\s*\+\s*encodeURIComponent\(btoa\("
-        r"'(\d+l)'\s*\+\s*encodeURIComponent\(sc\)\s*\+\s*'_(enc\d+)'\)\)",
+        r"'(\d+l)'\s*\+\s*encodeURIComponent\(sc\)\s*\+\s*'_((?:enc)?\d+)'\)\)",
         content, re.S,
     )
     if request is None:
@@ -38,7 +38,7 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
 
     timetable_request = re.search(
         r"function\s+QAjaxTimetable\s*\([^)]*\)\s*\{(?:(?!\bfunction\b).)*?"
-        r"url\s*:\s*'\.(/\d+)\?'\s*\+\s*btoa\([^;{}]*?'_(enc[0-9]+)'\s*\)",
+        r"url\s*:\s*'\.(/\d+)\?'\s*\+\s*btoa\([^;{}]*?'_((?:enc)?[0-9]+)'\s*\)",
         content, re.S,
     )
     if timetable_request is None or timetable_request.groups() != (endpoint, version):
