@@ -34,16 +34,27 @@ def test_latest_protocol_extracts_page_values():
     assert TimeTable._get_comcigan_codes(PAGE) == (protocol.endpoint,) + CODES[1:]
 
 
-def test_nested_school_list_spelling_with_new_divisor():
-    # Live page 2026-11-24: 학교명단[i][0] -> 학교명단.학교검색[i][0],
-    # divisor 5000 -> 6347. The live page spells the same formula as
-    # data[i][0] (학교명단_출력하기's parameter) and as
-    # H학교명단.학교검색[i][0] (sc_disp). All spellings must parse.
-    for spelling in ('학교명단.학교검색[i][0]/6347',
-                     'H학교명단.학교검색[i][0]/6347',
-                     'data[i][0]/6347'):
-        protocol = parse_service_protocol(PAGE.replace('학교명단[i][0]/5000', spelling))
-        assert (protocol.school_divisor, protocol.school_offset) == (6347, 2)
+@pytest.mark.parametrize('spelling', ('학교명단.학교검색', 'H학교명단.학교검색'))
+def test_nested_school_list_spelling_with_new_divisor(spelling):
+    page = PAGE.replace('학교명단[i][0]/5000', f'{spelling}[i][0]/6347')
+    protocol = parse_service_protocol(page)
+    assert (protocol.school_divisor, protocol.school_offset) == (6347, 2)
+
+
+def test_school_code_formula_ignores_unrelated_lists_and_rejects_conflicts():
+    decoy = 'function other(data) {var r=Math.floor(data[i][0]/4321)+3;}'
+    decoy += 'var n=Math.floor(whatever[i][0]/7777)+4;'
+    display = 'function 학교명단_출력하기(data) {var r=Math.floor(data[i][0]/6347)+2;}'
+    page = PAGE.replace('var r=Math.floor(학교명단[i][0]/5000)+2;', '')
+    protocol = parse_service_protocol(decoy + page + display)
+    assert (protocol.school_divisor, protocol.school_offset) == (6347, 2)
+    agreeing = 'var r=Math.floor(H학교명단.학교검색[i][0]/6347)+2;'
+    assert parse_service_protocol(decoy + page + agreeing + display).school_divisor == 6347
+    conflicting = agreeing.replace('/6347', '/5000')
+    with pytest.raises(RuntimeError, match='school code column'):
+        parse_service_protocol(decoy + page + conflicting + display)
+    with pytest.raises(RuntimeError, match='school code column'):
+        parse_service_protocol(decoy + page)
 
 
 def test_protocol_supports_literal_key_and_rejects_executable_key():
