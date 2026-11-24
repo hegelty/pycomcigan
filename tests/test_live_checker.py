@@ -9,7 +9,7 @@ import pytest
 from scripts import check_live_parser as checker
 
 
-CODES = ('/unused?1l', '107225', '119', '123', '108', '158', '167')
+CODES = ('/unused?1l', '107225', '자료119', '자료123', '자료108', '자료158', '자료167')
 SCHOOL = [5000, 'region', 'school', 123]
 
 
