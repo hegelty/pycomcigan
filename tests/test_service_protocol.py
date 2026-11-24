@@ -86,6 +86,31 @@ def test_protocol_captures_matching_new_version_and_whitespace():
     assert parse_service_protocol(page).version == 'enc6'
 
 
+def test_numeric_version_suffix_matches_live_page():
+    page = PAGE.replace('_enc5', '_7492')
+    protocol = parse_service_protocol(page)
+    assert protocol.version == '7492'
+    assert protocol.endpoint == '/987654?24680l'
+    rows = [[5000, '지역', '테스트고', 123]]
+    with patch('pycomcigan.helpers.get_response_encoding', return_value=SimpleNamespace(text='encrypted')) as get, \
+         patch('pycomcigan.helpers.decode_response', return_value={'학교검색': rows}) as decode:
+        assert school_search('테스트고', protocol.endpoint, protocol) == rows
+    token = unquote(get.call_args.args[0].split('?')[1])
+    expected = '24680l' + quote('테스트고', safe="~()*!.'-") + '_7492'
+    assert base64.b64decode(token).decode() == expected
+    decode.assert_called_once_with('encrypted', KEY, '7492')
+
+
+@pytest.mark.parametrize('week', [0, 1])
+def test_numeric_version_timetable_request(week):
+    page = PAGE.replace('_enc5', '_7492')
+    protocol = parse_service_protocol(page)
+    with patch('pycomcigan.timetable.get_response_encoding', return_value=SimpleNamespace(text='encrypted')) as get, \
+         patch('pycomcigan.timetable.decode_response', return_value={'시작일': '2026-11-02'}):
+        assert TimeTable._fetch_timetable_data(123, week, (protocol.endpoint,) + CODES[1:], protocol)['시작일']
+    assert base64.b64decode(get.call_args.args[0].split('?')[1]).decode() == f'107225_123_0_{week + 1}_7492'
+
+
 def test_nested_ajax_wrappers_are_decoded_without_execution():
     inner = obfuscate(PAGE).replace('hour-obfuscated-v2', 'hour-ajax-obfuscated-v1')
     inner = inner.removeprefix('<script>').removesuffix('</script>')
