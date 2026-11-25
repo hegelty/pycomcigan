@@ -169,7 +169,10 @@ class TimeTable:
         endpoint = comcigan_code.split('?', 1)[0]
         request_url = f'{COMCIGAN_URL}{endpoint}?{encoded_params.decode("ascii")}'
 
-        if protocol is not None and protocol.request_token is not None:
+        if protocol is not None and getattr(protocol, 'post_body', False):
+            response = get_response_encoding(f'{COMCIGAN_URL}{endpoint}', 'UTF-8',
+                                             request_token=protocol.request_token, body=encoded_params)
+        elif protocol is not None and protocol.request_token is not None:
             response = get_response_encoding(request_url, 'UTF-8', request_token=protocol.request_token)
         else:
             response = get_response_encoding(request_url, 'UTF-8')

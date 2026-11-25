@@ -31,7 +31,7 @@ class _Response:
     status_code: int
 
 
-def get_response_encoding(url: str, encoding: str, request_token: str = None) -> _Response:
+def get_response_encoding(url: str, encoding: str, request_token: str = None, *, body: bytes = None) -> _Response:
     """Fetch a page with per-request headers and a 30-second timeout.
 
     HTTP 403/429 retain the token/rate-limit errors; other HTTP and network
@@ -41,8 +41,11 @@ def get_response_encoding(url: str, encoding: str, request_token: str = None) ->
     headers = dict(HEADERS)
     if request_token is not None:
         headers['X-Hour-Token'] = request_token
+    if body is not None:
+        headers['Content-Type'] = 'text/plain; charset=UTF-8'
     try:
-        with urlopen(Request(url, headers=headers), timeout=30) as response:
+        request = Request(url, headers=headers) if body is None else Request(url, headers=headers, data=body)
+        with urlopen(request, timeout=30) as response:
             return _Response(
                 text=response.read().decode(encoding, errors='replace'),
                 status_code=response.status,
@@ -78,16 +81,23 @@ def school_search(school_name: str, comcigan_code: str, protocol: ServiceProtoco
         List[List]: List of school information in format:
                    [[region_code, region_name, school_name, school_code], ...]
     """
+    body = None
     if protocol is not None and protocol.version:
         endpoint, prefix = protocol.endpoint.split('?', 1)
         # Match JavaScript encodeURIComponent, including its punctuation safe set.
         encoded_name = parse.quote(school_name, safe="~()*!.'-", encoding='utf-8')
         token = base64.b64encode(f'{prefix}{encoded_name}_{protocol.version}'.encode('ascii')).decode('ascii')
-        search_url = f'{COMCIGAN_URL}{endpoint}?{parse.quote(token, safe="")}'
+        if getattr(protocol, 'post_body', False):
+            search_url = f'{COMCIGAN_URL}{endpoint}'
+            body = parse.quote(token, safe='').encode('ascii')
+        else:
+            search_url = f'{COMCIGAN_URL}{endpoint}?{parse.quote(token, safe="")}'
     else:
         school_name_encoded = encode_school_name(school_name)
         search_url = f"{COMCIGAN_URL}{comcigan_code}{school_name_encoded}"
-    if protocol is not None and protocol.request_token is not None:
+    if body is not None:
+        response = get_response_encoding(search_url, 'UTF-8', request_token=protocol.request_token, body=body)
+    elif protocol is not None and protocol.request_token is not None:
         response = get_response_encoding(search_url, 'UTF-8', request_token=protocol.request_token)
     else:
         response = get_response_encoding(search_url, 'UTF-8')
