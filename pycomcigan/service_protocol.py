@@ -15,18 +15,22 @@ _SCHOOL_REQUEST = re.compile(
 _TIMETABLE_REQUEST = re.compile(
     rf"url\s*:\s*'\.(/[0-9]+)\?'\s*\+\s*btoa\([^;{{}}]*?'_({RESPONSE_VERSION})'\s*\)"
 )
-_POST_SCHOOL_REQUEST = re.compile(
-    r"var\s+(?P<body>[\w$]+)\s*=\s*'(?P<prefix>[0-9]+l)'\s*\+\s*encodeURIComponent\(\s*sc\s*\)\s*;"
-    r"\s*return\s+\$\.ajax\s*\(\s*\{\s*url\s*:\s*'\.(?P<endpoint>/[0-9]+)'\s*,\s*method\s*:\s*(?P<method>[\w$]+)\s*,"
-    r"\s*contentType\s*:\s*'text/plain;\s*charset=UTF-8'\s*,\s*"
-    rf"data\s*:\s*encodeURIComponent\(\s*btoa\(\s*(?P=body)\s*\+\s*'_(?P<version>{RESPONSE_VERSION})'\s*\)\s*\)",
-    re.I,
+
+_SCRIPT = re.compile(r'<script\b[^>]*>(.*?)</script\s*>', re.I | re.S)
+_JS_IDENTIFIER = r'[^\W\d][\w$]*|\$[\w$]*'
+_POST_OPTIONS = (
+    rf"url\s*:\s*'\.(?P<endpoint>/[0-9]+)'\s*,\s*method\s*:\s*(?P<verb>{_JS_IDENTIFIER})\s*,"
+    r"\s*contentType\s*:\s*'text/plain;\s*charset=UTF-8'\s*,\s*data\s*:\s*"
 )
-_POST_TIMETABLE_REQUEST = re.compile(
-    r"url\s*:\s*'\.(?P<endpoint>/[0-9]+)'\s*,\s*method\s*:\s*(?P<method>[\w$]+)\s*,"
-    r"\s*contentType\s*:\s*'text/plain;\s*charset=UTF-8'\s*,\s*"
-    rf"data\s*:\s*btoa\([^;{{}}]*?'_(?P<version>{RESPONSE_VERSION})'\s*\)",
-    re.I,
+_SCHOOL_BODY = re.compile(
+    rf"\b(?:var|let|const)\s+(?P<input>{_JS_IDENTIFIER})\s*=\s*'(?P<prefix>[0-9]+l)'"
+    r"\s*\+\s*encodeURIComponent\(\s*sc\s*\)\s*;\s*"
+    r"return\s+\$\.ajax\(\s*\{\s*" + _POST_OPTIONS
+    + rf"encodeURIComponent\(\s*btoa\(\s*(?P=input)\s*\+\s*'_(?P<version>{RESPONSE_VERSION})'\s*\)\s*\)"
+)
+_TIMETABLE_BODY = re.compile(
+    r"return\s+\$\.ajax\(\s*\{\s*" + _POST_OPTIONS
+    + rf"btoa\([^;{{}}]*?'_(?P<version>{RESPONSE_VERSION})'\s*\)"
 )
 
 
@@ -42,68 +46,81 @@ class ServiceProtocol:
     start_date_field: Optional[str] = None
     period_times_field: Optional[str] = None
     timetable_prefix: Optional[str] = None
-    method: str = 'GET'
+    post_body: bool = False
 
 
 def parse_service_protocol(content: str) -> ServiceProtocol:
     declarations = list(_FUNCTION.finditer(content))
     functions = [
-        (match.group('name'), content[match.end():next_function])
+        (match.group('name'), content[match.end():next_function], match.end())
         for match, next_function in zip(
             declarations, [match.start() for match in declarations[1:]] + [len(content)]
         )
     ]
-    # Older encrypted pages use stable names. New pages rename the functions
-    # while keeping the structure of the two request URLs.
-    named_school = any(name == 'QAjaxSchool' for name, _ in functions)
+    # Parse query and body request pairs together rather than accepting a
+    # decoy query request in a page that actually serves body requests.
+    named_school = any(name == 'QAjaxSchool' for name, _, _ in functions)
     school_requests = [
-        (section, match)
-        for name, section in functions
-        if (not named_school or name == 'QAjaxSchool')
-        for match in _SCHOOL_REQUEST.finditer(section)
+        (section, match, body, section_start)
+        for name, section, section_start in functions
+        if not named_school or name == 'QAjaxSchool'
+        for pattern, body in ((_SCHOOL_REQUEST, False), (_SCHOOL_BODY, True))
+        for match in pattern.finditer(section)
     ]
-    method = 'GET'
-    if not school_requests:
-        school_requests = [
-            (section, match)
-            for name, section in functions
-            if (not named_school or name == 'QAjaxSchool')
-            for match in _POST_SCHOOL_REQUEST.finditer(section)
-        ]
-        if school_requests:
-            method = 'POST'
-    if not school_requests and not named_school and 'CryptoJS.enc.Hex.parse' not in content:
+    if (not school_requests and not named_school and 'CryptoJS.enc.Hex.parse' not in content
+            and not _SCHOOL_BODY.search(content) and not _TIMETABLE_BODY.search(content)):
         match = re.search(r'\.(/\d+\?\d+l)', content)
         if match is None:
             raise RuntimeError('Unable to parse Comcigan service endpoint; the service page structure may have changed')
         return ServiceProtocol(match.group(1))
     if len(school_requests) != 1:
         raise RuntimeError('Unable to parse Comcigan school request protocol')
-    school_section, request = school_requests[0]
-    if method == 'POST':
+    school_section, request, post_body, school_start = school_requests[0]
+    if post_body:
         endpoint, prefix, version = (request.group(key) for key in ('endpoint', 'prefix', 'version'))
     else:
         endpoint, prefix, version = request.groups()
 
     timetable_requests = [
-        (name, section, match)
-        for name, section in functions
+        (name, section, match, body, section_start)
+        for name, section, section_start in functions
         if not named_school or name == 'QAjaxTimetable'
-        for match in (_POST_TIMETABLE_REQUEST if method == 'POST' else _TIMETABLE_REQUEST).finditer(section)
+        for pattern, body in ((_TIMETABLE_REQUEST, False), (_TIMETABLE_BODY, True))
+        for match in pattern.finditer(section)
     ]
-    timetable_values = None
     if len(timetable_requests) == 1:
-        match = timetable_requests[0][2]
-        timetable_values = (match.group('endpoint'), match.group('version')) if method == 'POST' else match.groups()
-    if timetable_values != (endpoint, version):
+        timetable_name, timetable_section, timetable_request, timetable_body, timetable_start = timetable_requests[0]
+        timetable_protocol = (
+            (timetable_request['endpoint'], timetable_request['version']) if timetable_body
+            else timetable_request.groups()
+        )
+    if (len(timetable_requests) != 1 or timetable_body != post_body
+            or timetable_protocol != (endpoint, version)):
         raise RuntimeError(
             'Comcigan service page structure changed: school and timetable request protocols do not match'
         )
-    timetable_name, timetable_section, timetable_request = timetable_requests[0]
-    if method == 'POST':
-        method_name = request.group('method')
-        declarations = re.findall(rf"\b{re.escape(method_name)}\s*=\s*['\"]([^'\"]+)['\"]", content)
-        if timetable_request.group('method') != method_name or declarations != ['POST']:
+    if post_body:
+        verb = request['verb']
+        # A body request needs both operations in the same inline script
+        # and a single statically declared POST method, never a call or
+        # an assignment to a computed value.
+        scripts = [
+            script.group(1) for script in _SCRIPT.finditer(content)
+            if script.start(1) <= school_start + request.start() < script.end(1)
+            and script.start(1) <= timetable_start + timetable_request.start() < script.end(1)
+        ]
+        if len(scripts) != 1 or timetable_request['verb'] != verb:
+            raise RuntimeError('Invalid or inconsistent Comcigan request method')
+        script = scripts[0]
+        identifier = rf'(?:{_JS_IDENTIFIER})'
+        assignment = list(re.finditer(rf"(?<![\w$.]){re.escape(verb)}\s*=(?!=|>)", script))
+        literal_methods = list(re.finditer(
+            rf"\A\s*(?:var|let|const)\s+(?:{identifier}\s*=\s*{identifier}\s*,\s*)?"
+            rf"(?P<binding>{re.escape(verb)}\s*=)\s*(['\"])POST\2\s*;",
+            script,
+        ))
+        if (len(assignment) != 1 or len(literal_methods) != 1
+                or assignment[0].start() != literal_methods[0].start('binding')):
             raise RuntimeError('Invalid or inconsistent Comcigan request method')
     sections = (school_section[request.start():], timetable_section[timetable_request.start():])
 
@@ -114,16 +131,30 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     )
     advertised = [re.search(header_name, section) is not None for section in sections]
     request_token = None
-    if any(advertised):
-        if not all(re.search(header_reference, section) for section in sections):
+    if post_body or any(advertised):
+        if post_body:
+            # Accept the observed header alongside the body in these same
+            # Ajax options, not in another object in the surrounding function.
+            tails = (school_section[request.end():], timetable_section[timetable_request.end():])
+            header_matches = [
+                re.match(
+                    r"\s*,\s*" + header_reference.replace("[^{}]*?", r"\s*")
+                    + rf"\s*\}}(?:\s*,\s*dataType\s*:\s*'text'\s*,\s*success\s*:\s*(?:{_JS_IDENTIFIER}))?"
+                    + r"\s*\}\s*\)", tail,
+                )
+                for tail in tails
+            ]
+        else:
+            header_matches = [re.search(header_reference, section) for section in sections]
+        if not all(header_matches):
             raise RuntimeError('Invalid or inconsistent Comcigan request token headers')
-        token_match = re.search(
+        token_matches = list(re.finditer(
             r"\bwindow\.__HourRequestToken\s*=\s*(['\"])([0-9a-fA-F]+)\1\s*;",
             content,
-        )
-        if token_match is None:
+        ))
+        if not token_matches or (post_body and len(token_matches) != 1):
             raise RuntimeError('Unable to parse Comcigan request token literal')
-        request_token = token_match.group(2)
+        request_token = token_matches[0].group(2)
 
     key_match = re.search(r'var\s+key\s*=\s*CryptoJS\.enc\.Hex\.parse\((.*?)\);', content, re.S)
     if key_match is None:
@@ -156,7 +187,7 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     columns = set(re.findall(
         column_prefix + r'(?:학교명단|H?학교명단\s*\.\s*학교검색)' + column_suffix, content,
     ))
-    for name, section in functions:
+    for name, section, section_start in functions:
         if name == '학교명단_출력하기':
             columns.update(re.findall(column_prefix + 'data' + column_suffix, section))
     values = {(int(divisor), int(offset)) for divisor, offset in columns}
@@ -171,7 +202,7 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     forward = rf'(?<![\w$]){re.escape(timetable_name)}\s*\(\s*sc\s*,\s*sc2\s*,\s*da1\s*,\s*r\s*,'
     prefixes = {
         value
-        for name, section in functions
+        for name, section, section_start in functions
         if re.search(forward, section)
         for value in re.findall(rf"(?<![\w$]){re.escape(name)}\s*\(\s*'([0-9]+)_'\s*,", content)
     }
@@ -179,4 +210,4 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
         raise RuntimeError('Conflicting Comcigan timetable request prefixes')
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
                            school_divisor, school_offset, request_token,
-                           text_key, start_date_field, period_times_field, next(iter(prefixes), None), method)
+                           text_key, start_date_field, period_times_field, next(iter(prefixes), None), post_body)
