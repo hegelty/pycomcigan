@@ -65,6 +65,7 @@ jobs:
         run: poetry run twine check dist/*
 
       - name: Publish package to PyPI
+        if: github.repository == 'hegelty/pycomcigan'
         env:
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
         run: poetry publish
