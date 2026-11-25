@@ -15,6 +15,19 @@ _SCHOOL_REQUEST = re.compile(
 _TIMETABLE_REQUEST = re.compile(
     rf"url\s*:\s*'\.(/[0-9]+)\?'\s*\+\s*btoa\([^;{{}}]*?'_({RESPONSE_VERSION})'\s*\)"
 )
+_POST_SCHOOL_REQUEST = re.compile(
+    r"var\s+(?P<body>[\w$]+)\s*=\s*'(?P<prefix>[0-9]+l)'\s*\+\s*encodeURIComponent\(\s*sc\s*\)\s*;"
+    r"\s*return\s+\$\.ajax\s*\(\s*\{\s*url\s*:\s*'\.(?P<endpoint>/[0-9]+)'\s*,\s*method\s*:\s*(?P<method>[\w$]+)\s*,"
+    r"\s*contentType\s*:\s*'text/plain;\s*charset=UTF-8'\s*,\s*"
+    rf"data\s*:\s*encodeURIComponent\(\s*btoa\(\s*(?P=body)\s*\+\s*'_(?P<version>{RESPONSE_VERSION})'\s*\)\s*\)",
+    re.I,
+)
+_POST_TIMETABLE_REQUEST = re.compile(
+    r"url\s*:\s*'\.(?P<endpoint>/[0-9]+)'\s*,\s*method\s*:\s*(?P<method>[\w$]+)\s*,"
+    r"\s*contentType\s*:\s*'text/plain;\s*charset=UTF-8'\s*,\s*"
+    rf"data\s*:\s*btoa\([^;{{}}]*?'_(?P<version>{RESPONSE_VERSION})'\s*\)",
+    re.I,
+)
 
 
 @dataclass
@@ -29,6 +42,7 @@ class ServiceProtocol:
     start_date_field: Optional[str] = None
     period_times_field: Optional[str] = None
     timetable_prefix: Optional[str] = None
+    method: str = 'GET'
 
 
 def parse_service_protocol(content: str) -> ServiceProtocol:
@@ -48,6 +62,16 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
         if (not named_school or name == 'QAjaxSchool')
         for match in _SCHOOL_REQUEST.finditer(section)
     ]
+    method = 'GET'
+    if not school_requests:
+        school_requests = [
+            (section, match)
+            for name, section in functions
+            if (not named_school or name == 'QAjaxSchool')
+            for match in _POST_SCHOOL_REQUEST.finditer(section)
+        ]
+        if school_requests:
+            method = 'POST'
     if not school_requests and not named_school and 'CryptoJS.enc.Hex.parse' not in content:
         match = re.search(r'\.(/\d+\?\d+l)', content)
         if match is None:
@@ -56,19 +80,31 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     if len(school_requests) != 1:
         raise RuntimeError('Unable to parse Comcigan school request protocol')
     school_section, request = school_requests[0]
-    endpoint, prefix, version = request.groups()
+    if method == 'POST':
+        endpoint, prefix, version = (request.group(key) for key in ('endpoint', 'prefix', 'version'))
+    else:
+        endpoint, prefix, version = request.groups()
 
     timetable_requests = [
         (name, section, match)
         for name, section in functions
         if not named_school or name == 'QAjaxTimetable'
-        for match in _TIMETABLE_REQUEST.finditer(section)
+        for match in (_POST_TIMETABLE_REQUEST if method == 'POST' else _TIMETABLE_REQUEST).finditer(section)
     ]
-    if len(timetable_requests) != 1 or timetable_requests[0][2].groups() != (endpoint, version):
+    timetable_values = None
+    if len(timetable_requests) == 1:
+        match = timetable_requests[0][2]
+        timetable_values = (match.group('endpoint'), match.group('version')) if method == 'POST' else match.groups()
+    if timetable_values != (endpoint, version):
         raise RuntimeError(
             'Comcigan service page structure changed: school and timetable request protocols do not match'
         )
     timetable_name, timetable_section, timetable_request = timetable_requests[0]
+    if method == 'POST':
+        method_name = request.group('method')
+        declarations = re.findall(rf"\b{re.escape(method_name)}\s*=\s*['\"]([^'\"]+)['\"]", content)
+        if timetable_request.group('method') != method_name or declarations != ['POST']:
+            raise RuntimeError('Invalid or inconsistent Comcigan request method')
     sections = (school_section[request.start():], timetable_section[timetable_request.start():])
 
     header_name = r"['\"]X-Hour-Token['\"]\s*:"
@@ -143,4 +179,4 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
         raise RuntimeError('Conflicting Comcigan timetable request prefixes')
     return ServiceProtocol(endpoint + '?' + prefix, bytes.fromhex(key_hex), version,
                            school_divisor, school_offset, request_token,
-                           text_key, start_date_field, period_times_field, next(iter(prefixes), None))
+                           text_key, start_date_field, period_times_field, next(iter(prefixes), None), method)
