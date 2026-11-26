@@ -11,7 +11,67 @@ from .helpers import (
 from .service_page import decode_service_page
 from .service_protocol import parse_service_protocol
 from .encrypted_response import decode_response
-from .encoded_fields import DATA_FIELD, decode_timetable_fields
+from .encoded_fields import DATA_FIELD, _DECODER, decode_timetable_fields
+
+
+def _find_timetable_field_codes(content):
+    """Read field names without executing page scripts."""
+    wrapper = r'(?:[\w$]+\s*\(\s*)?'
+    patterns = {
+        'teacher data': rf'\b성명\s*=\s*{wrapper}자료\.({DATA_FIELD})\s*\[\s*th\s*\]',
+        'subject data': rf'자료\.({DATA_FIELD})\s*\[\s*sb\s*\]',
+        'update data': rf'\bda1\s*=\s*{wrapper}H시간표\.({DATA_FIELD})',
+        'current timetable': rf'\b일일자료\s*=\s*Q자료\(\s*자료\.({DATA_FIELD})',
+        'original timetable': rf'\b원자료\s*=\s*Q자료\(\s*자료\.({DATA_FIELD})',
+    }
+    matches = {name: set(re.findall(pattern, content)) for name, pattern in patterns.items()}
+
+    # The cached-update branch supplies the update field to the timetable
+    # call. Require the recognized text decoder, not an arbitrary invocation.
+    if not matches['update data']:
+        decoders = {m['name'] for m in _DECODER.finditer(content)}
+        if len(decoders) == 1:
+            decoder = re.escape(decoders.pop())
+            update = re.compile(
+                rf'\bda1\s*=\s*{decoder}\(\s*[\w$]+\.(?P<field>{DATA_FIELD})\s*\)'
+                r"""\s*\|\|\s*(?P<quote>['"])0(?P=quote)\s*;\s*\}\s*"""
+                r'[\w$]+\s*\(\s*sc\s*,\s*sc2\s*,\s*da1\s*,\s*r\s*,\s*function\s*\(',
+            )
+            matches['update data'].update(m['field'] for m in update.finditer(content))
+
+    # In modern renderers, the displayed and original period codes are
+    # paired as the first and second arguments of the change-display helper.
+    # Other arrays, including the room array, don't satisfy this data flow.
+    if not matches['current timetable'] or not matches['original timetable']:
+        indexes = r'\[\s*학년\s*\]\s*\[\s*반\s*\]\s*\[\s*요일\s*\]\s*\[\s*교시\s*\]'
+        period = rf'\(\s*자료\.(?P<{{field}}>{DATA_FIELD})\s*{indexes}\s*\)'
+        original_period = period.format(field='original_field')
+        current_period = period.format(field='current_field')
+        paired = re.compile(
+            rf'(?<![\w$.])(?P<old>[\w$]+)\s*=\s*(?P<decode>[\w$]+){original_period}\s*;\s*'
+            rf'(?P<new>[\w$]+)\s*=\s*(?P=decode){current_period}\s*;'
+            r'(?:(?!\bfunction\b|(?<![\w$.])(?:(?P=old)|(?P=new))\s*=(?!=)).){0,2000}?'
+            r'(?<![\w$.])baSplit\(\s*(?P=new)\s*,\s*(?P=old)\s*,\s*자료\.변경알림\s*\)',
+            re.S,
+        )
+        pairs = {
+            (m['current_field'], m['original_field'])
+            for m in paired.finditer(content)
+            if m['old'] != m['new']
+        }
+        if len(pairs) == 1:
+            current, original = pairs.pop()
+            matches['current timetable'].add(current)
+            matches['original timetable'].add(original)
+
+    codes = []
+    for name, values in matches.items():
+        if len(values) != 1:
+            raise RuntimeError(f'Unable to parse Comcigan {name}; the service page structure may have changed')
+        codes.append(values.pop())
+    if codes[3] == codes[4]:
+        raise RuntimeError('Unable to distinguish Comcigan current and original timetables')
+    return tuple(codes)
 
 
 class Lecture:
@@ -120,28 +180,7 @@ class TimeTable:
             if legacy_call is None or (protocol.version and protocol.version.isdecimal()):
                 raise RuntimeError('Unable to parse Comcigan timetable request prefix')
             prefix = legacy_call.group(1)
-        wrapper = r'(?:[\w$]+\s*\(\s*)?'
-        patterns = {
-            'teacher data': rf'\b성명\s*=\s*{wrapper}자료\.({DATA_FIELD})\s*\[\s*th\s*\]',
-            'subject data': rf'자료\.({DATA_FIELD})\s*\[\s*sb\s*\]',
-            'update data': rf'\bda1\s*=\s*{wrapper}H시간표\.({DATA_FIELD})',
-            'current timetable': rf'\b일일자료\s*=\s*Q자료\(\s*자료\.({DATA_FIELD})',
-            'original timetable': rf'\b원자료\s*=\s*Q자료\(\s*자료\.({DATA_FIELD})',
-        }
-
-        codes = [protocol.endpoint, prefix]
-        for name, pattern in patterns.items():
-            match = re.search(pattern, content)
-            if match is None:
-                raise RuntimeError(
-                    f"Unable to parse Comcigan {name}; the service page structure may have changed"
-                )
-            codes.append(match.group(1))
-
-        return (
-            codes[0], codes[1], codes[2], codes[3],
-            codes[4], codes[5], codes[6]
-        )
+        return (protocol.endpoint, prefix, *_find_timetable_field_codes(content))
 
     def _resolve_school(self, school_name: str, local_code: int, school_code: int, comcigan_code: str, protocol=None) -> Tuple[
         int, str, int]:
