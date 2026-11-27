@@ -107,6 +107,249 @@ class TimeTableData:
         return self.__str__()
 
 
+def _decode_timetable_response(text: str, codes: Tuple, protocol=None) -> dict:
+    """Authenticate and interpret already received response text without I/O."""
+    data = decode_response(text, protocol.key if protocol else None,
+                           protocol.version if protocol else 'enc5')
+    return decode_timetable_fields(data, codes, protocol)
+
+
+def _validate_raw_timetable(grid):
+    """Check counted source arrays before the parser fills missing periods."""
+    if not isinstance(grid, list):
+        raise ValueError('invalid timetable array')
+    classes = {}
+    for grade_index, grade in enumerate(grid[1:], 1):
+        if not isinstance(grade, list):
+            raise ValueError('invalid grade array')
+        for class_index, classroom in enumerate(grade[1:], 1):
+            if (not isinstance(classroom, list) or not classroom
+                    or type(classroom[0]) is not int or classroom[0] <= 0
+                    or len(classroom) <= classroom[0]):
+                raise ValueError('invalid class day structure')
+            classes[grade_index, class_index] = classroom[0]
+            for day in classroom[1:classroom[0] + 1]:
+                if (not isinstance(day, list) or not day
+                        or type(day[0]) is not int or day[0] < 0
+                        or len(day) <= day[0]):
+                    raise ValueError('invalid day period structure')
+    if not classes:
+        raise ValueError('empty timetable structure')
+    return classes
+
+
+def _build_timetable(data: dict, teacher_list: List[str], subject_list: List[str], code4: str, code5: str,
+                     subject_divisor: int, change_notifications: bool) -> \
+        List[List[List[List[TimeTableData]]]]:
+    """Build the complete timetable data structure."""
+    original_timetable = data[code5]
+    current_timetable = data[code4]
+    timetable = []
+
+    for grade_idx, grade_data in enumerate(current_timetable):
+        if grade_idx == 0:
+            timetable.append([])
+            continue
+
+        grade_timetable = [[]]  # Start with empty class 0
+
+        for class_idx, class_data in enumerate(grade_data):
+            if class_idx == 0:
+                continue
+
+            class_timetable = _build_class_timetable(
+                grade_idx, class_idx, class_data, original_timetable,
+                teacher_list, subject_list, subject_divisor,
+                change_notifications
+            )
+            grade_timetable.append(class_timetable)
+
+        timetable.append(grade_timetable)
+
+    return timetable
+
+
+def _build_class_timetable(grade_idx: int, class_idx: int, class_data: List,
+                           original_timetable: List, teacher_list: List[str],
+                           subject_list: List[str], subject_divisor: int,
+                           change_notifications: bool) -> List[List[TimeTableData]]:
+    """Build timetable for a specific class with guaranteed 8 periods per day."""
+    class_timetable = [[]]  # Start with empty day 0
+    original_class = original_timetable[grade_idx][class_idx]
+
+    for day in range(1, original_class[0] + 1):
+        day_timetable = []
+
+        # Ensure we always have 8 periods per day
+        max_periods = max(
+            original_class[day][0] if day < len(original_class) else 0,
+            class_data[day][0] if day < len(class_data) else 0,
+            8  # Force minimum 8 periods
+        )
+
+        for period in range(1, max_periods + 1):
+            period_data = _create_period_data(
+                period, day, class_data, original_class,
+                teacher_list, subject_list, subject_divisor,
+                change_notifications
+            )
+            day_timetable.append(period_data)
+
+        class_timetable.append(day_timetable)
+
+    return class_timetable
+
+
+def _create_period_data(period: int, day: int, class_data: List,
+                        original_class: List, teacher_list: List[str],
+                        subject_list: List[str], subject_divisor: int = 100,
+                        change_notifications: bool = False) -> TimeTableData:
+    """Create TimeTableData for a specific period."""
+    # Get original period data (handle bounds checking)
+    original_period_raw = 0
+    if (day < len(original_class) and
+            len(original_class[day]) > 0 and
+            period <= original_class[day][0] and
+            period < len(original_class[day])):
+        original_period_raw = original_class[day][period]
+
+    # Get current period data (handle bounds checking)
+    current_period_raw = 0
+    if (day < len(class_data) and
+            len(class_data[day]) > 0 and
+            period <= class_data[day][0] and
+            period < len(class_data[day])):
+        current_period_raw = class_data[day][period]
+
+    original_period, original_subject_idx, original_teacher_idx = \
+        _decode_period_code(original_period_raw, subject_divisor)
+    current_period, subject_idx, teacher_idx = \
+        _decode_period_code(current_period_raw, subject_divisor)
+
+    marked_as_replaced = (
+        isinstance(current_period_raw, str) and
+        current_period_raw.startswith(">")
+    )
+    replaced = (
+        marked_as_replaced if change_notifications
+        else current_period != original_period
+    )
+
+    # Create original lecture if replacement occurred
+    original_lecture = None
+    if replaced and original_period != 0:
+        original_lecture = Lecture(
+            period=period,
+            subject=subject_list[original_subject_idx]
+            if original_subject_idx < len(subject_list) else "",
+            teacher=teacher_list[original_teacher_idx]
+            if original_teacher_idx < len(teacher_list) else ""
+        )
+
+    # Get subject and teacher names with bounds checking
+    subject_name = ""
+    teacher_name = ""
+
+    if current_period != 0:
+        if subject_idx < len(subject_list):
+            subject_name = subject_list[subject_idx]
+        if teacher_idx < len(teacher_list):
+            teacher_name = teacher_list[teacher_idx]
+
+    return TimeTableData(
+        period=period,
+        subject=subject_name,
+        teacher=teacher_name,
+        replaced=replaced,
+        original=original_lecture
+    )
+
+
+def _decode_period_code(value, subject_divisor: int) -> Tuple[int, int, int]:
+    """Decode Comcigan's packed subject/teacher value.
+
+    Current timetable values can be strings prefixed with ``>`` to mark a
+    changed lecture. The final three digits are the teacher index; the
+    preceding digits contain the subject index and optional time-group data.
+    """
+    if value in (None, "", 0, "0"):
+        return 0, 0, 0
+
+    value_text = str(value)
+    if value_text.startswith(">"):
+        value_text = value_text[1:]
+
+    try:
+        packed_value = int(value_text)
+    except ValueError:
+        return 0, 0, 0
+
+    subject_code, teacher_idx = divmod(packed_value, 1000)
+    subject_idx = subject_code % subject_divisor
+    return packed_value, subject_idx, teacher_idx
+
+
+def _format_teacher_name(name) -> str:
+    """Apply the same masked-name formatting as Comcigan's Q성명."""
+    if not isinstance(name, str):
+        return ""
+
+    contains_internal_mask = (
+        "*" in name and
+        not name.startswith("*") and
+        not name.endswith("*")
+    )
+    is_two_character_mask = len(name) == 2 and name[1] == "*"
+    if contains_internal_mask or is_two_character_mask:
+        return name
+
+    return name.replace("*", "", 1)
+
+
+def _process_homeroom_teachers(homeroom_data: List[List[int]], teacher_list: List[str]) -> List[List[str]]:
+    """Process homeroom teacher data and convert to teacher names."""
+    processed_homeroom = []
+
+    for grade_teachers in homeroom_data:
+        grade_homeroom = []
+        for teacher_code in grade_teachers:
+            if teacher_code in [0, 255]:
+                break
+            if teacher_code < len(teacher_list):
+                grade_homeroom.append(teacher_list[teacher_code])
+        processed_homeroom.append(grade_homeroom)
+
+    return processed_homeroom
+
+def _parse_timetable_data(data, codes):
+    """Interpret decoded fields as the existing timetable models and metadata.
+
+    Raw field names and counted arrays stay within the interpretation layer.
+    Validate source structure before padding legitimate empty periods.
+    """
+    _, _, teacher_code, subject_code, update_code, current_code, original_code = codes
+    current = _validate_raw_timetable(data[current_code])
+    original = _validate_raw_timetable(data[original_code])
+    if current != original:
+        raise ValueError('inconsistent timetable class or day structure')
+
+    teachers = [_format_teacher_name(name) for name in data[teacher_code]]
+    subjects = list(data[subject_code])
+    subjects[0] = ""
+    return {
+        "local_name": data["지역명"],
+        "school_year": data["학년도"],
+        "start_date": data["시작일"],
+        "day_time": data["일과시간"],
+        "update_date": data[update_code],
+        "timetable": _build_timetable(
+            data, teachers, subjects, current_code, original_code,
+            int(data.get("분리", 100)), str(data.get("변경알림")) == "1"
+        ),
+        "_homeroom_teacher": _process_homeroom_teachers(data["담임"], teachers),
+    }
+
+
 class TimeTable:
     """Main class for fetching and storing school timetable information."""
 
@@ -198,8 +441,8 @@ class TimeTable:
         return result[0], result[2], result[3]
 
     @staticmethod
-    def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple, protocol=None) -> dict:
-        """Fetch timetable data from Comcigan API."""
+    def _request_timetable(school_code: int, week_num: int, comcigan_codes: Tuple, protocol=None) -> str:
+        """Fetch response text; do not interpret the timetable here."""
         comcigan_code, code0, *_ = comcigan_codes
 
         # Encode request parameters
@@ -216,226 +459,43 @@ class TimeTable:
         else:
             response = get_response_encoding(request_url, 'UTF-8')
 
-        # Authenticate encrypted responses before parsing their JSON payload.
-        data = decode_response(response.text, protocol.key if protocol else None,
-                               protocol.version if protocol else 'enc5')
-        return decode_timetable_fields(data, comcigan_codes, protocol)
+        return response.text
+
+    @staticmethod
+    def _fetch_timetable_data(school_code: int, week_num: int, comcigan_codes: Tuple, protocol=None) -> dict:
+        """Fetch and decode the response, retaining the existing internal contract."""
+        text = TimeTable._request_timetable(school_code, week_num, comcigan_codes, protocol)
+        return _decode_timetable_response(text, comcigan_codes, protocol)
+
+    @classmethod
+    def _from_data(cls, data, local_code, school_name, school_code, codes):
+        """Internal no-I/O construction path shared with the health checker."""
+        table = cls.__new__(cls)
+        table._initialize_from_data(data, local_code, school_name, school_code, codes)
+        return table
+
+    @classmethod
+    def _from_response(cls, text, local_code, school_name, school_code, codes, protocol=None):
+        """Interpret already received response text without requesting a school or timetable."""
+        return cls._from_data(_decode_timetable_response(text, codes, protocol),
+                              local_code, school_name, school_code, codes)
 
     def _initialize_from_data(self, data: dict, local_code: int, school_name: str, school_code: int,
                               comcigan_codes: Tuple) -> None:
-        """Initialize instance variables from fetched data."""
-        _, _, code1, code2, code3, code4, code5 = comcigan_codes
-
-        # Set basic school information
+        """Assign public metadata and interpreted timetable models."""
+        parsed = _parse_timetable_data(data, comcigan_codes)
         self.school_code = school_code
         self.school_name = school_name
         self.local_code = local_code
-        self.local_name = data["지역명"]
-        self.school_year = data["학년도"]
-        self.start_date = data["시작일"]
-        self.day_time = data["일과시간"]
-        self.update_date = data[code3]
+        self.__dict__.update(parsed)
 
-        # Process teacher and subject lists
-        teacher_list = [
-            self._format_teacher_name(name)
-            for name in data[code1]
-        ]
-        subject_list = list(data[code2])
-        subject_list[0] = ""
-
-        # Build timetable data structure
-        self.timetable = self._build_timetable(
-            data, teacher_list, subject_list, code4, code5,
-            int(data.get("분리", 100)), str(data.get("변경알림")) == "1"
-        )
-
-        # Process homeroom teacher information
-        self._homeroom_teacher = self._process_homeroom_teachers(
-            data["담임"], teacher_list
-        )
-
-    def _build_timetable(self, data: dict, teacher_list: List[str], subject_list: List[str], code4: str, code5: str,
-                         subject_divisor: int, change_notifications: bool) -> \
-            List[List[List[List[TimeTableData]]]]:
-        """Build the complete timetable data structure."""
-        original_timetable = data[code5]
-        current_timetable = data[code4]
-        timetable = []
-
-        for grade_idx, grade_data in enumerate(current_timetable):
-            if grade_idx == 0:
-                timetable.append([])
-                continue
-
-            grade_timetable = [[]]  # Start with empty class 0
-
-            for class_idx, class_data in enumerate(grade_data):
-                if class_idx == 0:
-                    continue
-
-                class_timetable = self._build_class_timetable(
-                    grade_idx, class_idx, class_data, original_timetable,
-                    teacher_list, subject_list, subject_divisor,
-                    change_notifications
-                )
-                grade_timetable.append(class_timetable)
-
-            timetable.append(grade_timetable)
-
-        return timetable
-
-    def _build_class_timetable(self, grade_idx: int, class_idx: int, class_data: List,
-                               original_timetable: List, teacher_list: List[str],
-                               subject_list: List[str], subject_divisor: int,
-                               change_notifications: bool) -> List[List[TimeTableData]]:
-        """Build timetable for a specific class with guaranteed 8 periods per day."""
-        class_timetable = [[]]  # Start with empty day 0
-        original_class = original_timetable[grade_idx][class_idx]
-
-        for day in range(1, original_class[0] + 1):
-            day_timetable = []
-
-            # Ensure we always have 8 periods per day
-            max_periods = max(
-                original_class[day][0] if day < len(original_class) else 0,
-                class_data[day][0] if day < len(class_data) else 0,
-                8  # Force minimum 8 periods
-            )
-
-            for period in range(1, max_periods + 1):
-                period_data = self._create_period_data(
-                    period, day, class_data, original_class,
-                    teacher_list, subject_list, subject_divisor,
-                    change_notifications
-                )
-                day_timetable.append(period_data)
-
-            class_timetable.append(day_timetable)
-
-        return class_timetable
-
-    @staticmethod
-    def _create_period_data(period: int, day: int, class_data: List,
-                            original_class: List, teacher_list: List[str],
-                            subject_list: List[str], subject_divisor: int = 100,
-                            change_notifications: bool = False) -> TimeTableData:
-        """Create TimeTableData for a specific period."""
-        # Get original period data (handle bounds checking)
-        original_period_raw = 0
-        if (day < len(original_class) and
-                len(original_class[day]) > 0 and
-                period <= original_class[day][0] and
-                period < len(original_class[day])):
-            original_period_raw = original_class[day][period]
-
-        # Get current period data (handle bounds checking)
-        current_period_raw = 0
-        if (day < len(class_data) and
-                len(class_data[day]) > 0 and
-                period <= class_data[day][0] and
-                period < len(class_data[day])):
-            current_period_raw = class_data[day][period]
-
-        original_period, original_subject_idx, original_teacher_idx = \
-            TimeTable._decode_period_code(original_period_raw, subject_divisor)
-        current_period, subject_idx, teacher_idx = \
-            TimeTable._decode_period_code(current_period_raw, subject_divisor)
-
-        marked_as_replaced = (
-            isinstance(current_period_raw, str) and
-            current_period_raw.startswith(">")
-        )
-        replaced = (
-            marked_as_replaced if change_notifications
-            else current_period != original_period
-        )
-
-        # Create original lecture if replacement occurred
-        original_lecture = None
-        if replaced and original_period != 0:
-            original_lecture = Lecture(
-                period=period,
-                subject=subject_list[original_subject_idx]
-                if original_subject_idx < len(subject_list) else "",
-                teacher=teacher_list[original_teacher_idx]
-                if original_teacher_idx < len(teacher_list) else ""
-            )
-
-        # Get subject and teacher names with bounds checking
-        subject_name = ""
-        teacher_name = ""
-
-        if current_period != 0:
-            if subject_idx < len(subject_list):
-                subject_name = subject_list[subject_idx]
-            if teacher_idx < len(teacher_list):
-                teacher_name = teacher_list[teacher_idx]
-
-        return TimeTableData(
-            period=period,
-            subject=subject_name,
-            teacher=teacher_name,
-            replaced=replaced,
-            original=original_lecture
-        )
-
-    @staticmethod
-    def _decode_period_code(value, subject_divisor: int) -> Tuple[int, int, int]:
-        """Decode Comcigan's packed subject/teacher value.
-
-        Current timetable values can be strings prefixed with ``>`` to mark a
-        changed lecture. The final three digits are the teacher index; the
-        preceding digits contain the subject index and optional time-group data.
-        """
-        if value in (None, "", 0, "0"):
-            return 0, 0, 0
-
-        value_text = str(value)
-        if value_text.startswith(">"):
-            value_text = value_text[1:]
-
-        try:
-            packed_value = int(value_text)
-        except ValueError:
-            return 0, 0, 0
-
-        subject_code, teacher_idx = divmod(packed_value, 1000)
-        subject_idx = subject_code % subject_divisor
-        return packed_value, subject_idx, teacher_idx
-
-    @staticmethod
-    def _format_teacher_name(name) -> str:
-        """Apply the same masked-name formatting as Comcigan's Q성명."""
-        if not isinstance(name, str):
-            return ""
-
-        contains_internal_mask = (
-            "*" in name and
-            not name.startswith("*") and
-            not name.endswith("*")
-        )
-        is_two_character_mask = len(name) == 2 and name[1] == "*"
-        if contains_internal_mask or is_two_character_mask:
-            return name
-
-        return name.replace("*", "", 1)
-
-    @staticmethod
-    def _process_homeroom_teachers(homeroom_data: List[List[int]], teacher_list: List[str]) -> List[List[str]]:
-        """Process homeroom teacher data and convert to teacher names."""
-        processed_homeroom = []
-
-        for grade_teachers in homeroom_data:
-            grade_homeroom = []
-            for teacher_code in grade_teachers:
-                if teacher_code in [0, 255]:
-                    break
-                if teacher_code < len(teacher_list):
-                    grade_homeroom.append(teacher_list[teacher_code])
-            processed_homeroom.append(grade_homeroom)
-
-        return processed_homeroom
+    # Retain existing private helpers used by the offline regression tests.
+    _build_timetable = staticmethod(_build_timetable)
+    _build_class_timetable = staticmethod(_build_class_timetable)
+    _create_period_data = staticmethod(_create_period_data)
+    _decode_period_code = staticmethod(_decode_period_code)
+    _format_teacher_name = staticmethod(_format_teacher_name)
+    _process_homeroom_teachers = staticmethod(_process_homeroom_teachers)
 
     def homeroom(self, grade: int, cls: int) -> str:
         """

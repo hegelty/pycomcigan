@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from scripts import check_live_parser as checker
+from pycomcigan import timetable as timetable_module
 
 
 CODES = ('/unused?1l', '107225', '자료119', '자료123', '자료108', '자료158', '자료167')
@@ -45,7 +46,7 @@ def test_malformed_raw_arrays_fail_before_parser_normalization(monkeypatch, fiel
     def should_not_initialize(*args):
         pytest.fail('raw arrays must be validated before parser normalization')
 
-    monkeypatch.setattr(checker.TimeTable, '_initialize_from_data', should_not_initialize)
+    monkeypatch.setattr(timetable_module, '_build_timetable', should_not_initialize)
     with pytest.raises(ValueError):
         checker.validate_timetable(data, SCHOOL, CODES)
 
