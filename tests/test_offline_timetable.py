@@ -1,18 +1,22 @@
 """Synthetic offline interpretation and transport/constructor equivalence."""
 
+import base64
+import hashlib
+import hmac
 import json
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad
 
 from pycomcigan import TimeTable
 from pycomcigan.service_protocol import parse_service_protocol
 from pycomcigan.timetable import Lecture, TimeTableData
 from scripts.check_live_parser import validate_timetable
 from test_encoded_fields import FIXTURES, PAGE as ENCODED_PAGE
-from test_encrypted_response import envelope
 from test_post_page_transport import POST_PAGE
 from test_service_protocol import KEY
 from test_timetable import BASE_PAGE
@@ -28,6 +32,16 @@ MODERN_PAGE = (POST_PAGE.replace('자료119', 'xTeacher')
                .replace('자료108', 'xUpdate')
                .replace('자료158', 'xCurrent')
                .replace('자료167', 'xOriginal'))
+
+
+def envelope(data, key):
+    """Encrypt synthetic samples; fixed-vector authentication tests remain separate."""
+    iv = bytes(range(16, 32))
+    ciphertext = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(data, 16))
+    head = ':'.join(('enc5', base64.b64encode(iv).decode('ascii'),
+                     base64.b64encode(ciphertext).decode('ascii')))
+    tag = hmac.new(hashlib.sha256(key).digest(), head.encode('ascii'), hashlib.sha256).digest()
+    return head + ':' + base64.b64encode(tag).decode('ascii')
 
 
 def sample(codes, marked):
@@ -66,7 +80,8 @@ def snapshot(table):
     }
 
 
-@pytest.mark.parametrize('page,marked', [(LEGACY_PAGE, False), (MODERN_PAGE, True)])
+@pytest.mark.parametrize('page,marked', [(LEGACY_PAGE, False), (MODERN_PAGE, True)],
+                         ids=['legacy-get', 'modern-post'])
 def test_offline_response_matches_public_constructor_and_expected_models(page, marked):
     protocol = parse_service_protocol(page)
     codes = TimeTable._get_comcigan_codes(page)
