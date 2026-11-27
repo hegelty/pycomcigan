@@ -1,4 +1,5 @@
 import base64
+from copy import deepcopy
 import re
 from typing import List, Optional, Tuple
 
@@ -272,16 +273,23 @@ def _decode_period_code(value, subject_divisor: int) -> Tuple[int, int, int]:
     changed lecture. The final three digits are the teacher index; the
     preceding digits contain the subject index and optional time-group data.
     """
-    if value in (None, "", 0, "0"):
+    # Preserve the existing empty-period sentinels, including a marked zero.
+    # An undecodable nonempty value is not evidence of an empty lesson.
+    if value is None or value == "":
         return 0, 0, 0
-
-    value_text = str(value)
-    if value_text.startswith(">"):
-        value_text = value_text[1:]
-
-    try:
-        packed_value = int(value_text)
-    except ValueError:
+    if type(value) is int:
+        packed_value = value
+    elif isinstance(value, str):
+        value_text = value[1:] if value.startswith(">") else value
+        try:
+            packed_value = int(value_text)
+        except ValueError:
+            raise ValueError("invalid timetable period code") from None
+    else:
+        raise ValueError("invalid timetable period code")
+    if packed_value < 0:
+        raise ValueError("invalid timetable period code")
+    if packed_value == 0:
         return 0, 0, 0
 
     subject_code, teacher_idx = divmod(packed_value, 1000)
@@ -331,6 +339,9 @@ def _parse_timetable_data(data, codes):
     _, _, teacher_code, subject_code, update_code, current_code, original_code = codes
     current = _validate_raw_timetable(data[current_code])
     original = _validate_raw_timetable(data[original_code])
+    # A missing class/day cannot be reconstructed from the other grid.
+    # Period counts may differ: explicit short/empty days are still padded
+    # by _build_class_timetable, preserving cancellation and added lessons.
     if current != original:
         raise ValueError('inconsistent timetable class or day structure')
 
@@ -341,7 +352,7 @@ def _parse_timetable_data(data, codes):
         "local_name": data["지역명"],
         "school_year": data["학년도"],
         "start_date": data["시작일"],
-        "day_time": data["일과시간"],
+        "day_time": deepcopy(data["일과시간"]),
         "update_date": data[update_code],
         "timetable": _build_timetable(
             data, teachers, subjects, current_code, original_code,

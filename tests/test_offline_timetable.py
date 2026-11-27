@@ -47,7 +47,7 @@ def envelope(data, key):
 def sample(codes, marked):
     # The modern variant changes table indices as well as field names and
     # transport. Both layouts must produce the same semantic timetable.
-    original, current = (2002, 1001) if marked else (1001, 2002)
+    original, current = (1002002, 1001001) if marked else (1001, 2002)
     teachers = ['', 'teacher B*', 'teacher A*'] if marked else ['', 'teacher A*', 'teacher B*']
     subjects = ['', 'subject B', 'subject A'] if marked else ['', 'subject A', 'subject B']
     return {
@@ -144,7 +144,6 @@ def test_missing_original_information_is_not_an_empty_lesson(failure, exception)
         validate_timetable(data, SCHOOL, codes)
 
 
-
 def test_encoded_fields_fixture_is_replayable_and_matches_public_path():
     protocol = parse_service_protocol(ENCODED_PAGE)
     codes = TimeTable._get_comcigan_codes(ENCODED_PAGE)
@@ -189,5 +188,61 @@ def test_decoded_data_replay_does_not_mutate_input_or_share_lesson_objects():
     assert data == before
     assert snapshot(first) == snapshot(second)
     first.timetable[1][1][1][0].original.subject = 'edited'
+    first.day_time.append('10:00')
     assert second.timetable[1][1][1][0].original.subject == 'subject A'
+    assert second.day_time == ['09:00']
     assert data == before
+
+
+@pytest.mark.parametrize('field_index', [5, 6], ids=['current', 'original'])
+@pytest.mark.parametrize('value', ['invalid', '>invalid', -1, '-1', True, 1.5, [], {}])
+def test_corrupt_period_codes_fail_in_public_replay_and_health_paths(field_index, value):
+    protocol = parse_service_protocol(LEGACY_PAGE)
+    codes = TimeTable._get_comcigan_codes(LEGACY_PAGE)
+    data = sample(codes, False)
+    data[codes[field_index]][1][1][1][1] = value
+    payload = json.dumps(data)
+    with pytest.raises(ValueError, match='invalid timetable period code'):
+        TimeTable._from_response(payload, SCHOOL[0], SCHOOL[2], SCHOOL[3], codes, protocol)
+    with pytest.raises(ValueError, match='invalid timetable period code'):
+        validate_timetable(data, SCHOOL, codes)
+    with patch('pycomcigan.timetable.get_comcigan_response_for_codes',
+               return_value=SimpleNamespace(text=LEGACY_PAGE)), \
+         patch('pycomcigan.timetable.school_search', return_value=[SCHOOL]), \
+         patch('pycomcigan.timetable.get_response_encoding',
+               return_value=SimpleNamespace(text=payload)), \
+         pytest.raises(ValueError, match='invalid timetable period code'):
+        TimeTable(SCHOOL[2], school_code=SCHOOL[3])
+
+
+@pytest.mark.parametrize('value', [None, '', 0, '0', '>0'])
+def test_legacy_empty_period_sentinels_are_preserved(value):
+    codes = TimeTable._get_comcigan_codes(LEGACY_PAGE)
+    data = sample(codes, False)
+    for field in codes[5:7]:
+        data[field][1][1][1][3] = value
+    table = TimeTable._from_data(data, SCHOOL[0], SCHOOL[2], SCHOOL[3], codes)
+    lesson = table.timetable[1][1][1][2]
+    assert (lesson.period, lesson.subject, lesson.teacher, lesson.replaced, lesson.original) == (
+        3, '', '', False, None
+    )
+
+
+@pytest.mark.parametrize('current,original,expected', [
+    ([0], [1, 1001], ('', '', True, 'subject A')),
+    ([1, 2002], [0], ('subject B', 'teacher B', True, None)),
+    ([1, 2002], [2, 2002, 0], ('subject B', 'teacher B', False, None)),
+], ids=['cancelled', 'added', 'different-period-counts'])
+def test_counted_short_days_preserve_existing_empty_and_changed_lessons(current, original, expected):
+    codes = TimeTable._get_comcigan_codes(LEGACY_PAGE)
+    data = sample(codes, False)
+    data[codes[5]][1][1][1] = current
+    data[codes[6]][1][1][1] = original
+    table = TimeTable._from_data(data, SCHOOL[0], SCHOOL[2], SCHOOL[3], codes)
+    day = table.timetable[1][1][1]
+    assert len(day) == 8
+    lesson = day[0]
+    assert (lesson.subject, lesson.teacher, lesson.replaced,
+            lesson.original.subject if lesson.original else None) == expected
+    assert all(p.subject == '' and p.original is None and not p.replaced for p in day[1:])
+    assert 'classes=1' in validate_timetable(data, SCHOOL, codes)
