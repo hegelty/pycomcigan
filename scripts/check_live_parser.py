@@ -22,6 +22,11 @@ def validate_timetable(data, school, codes):
     출력: 시작일과 학급·수업 수를 담은 요약이며 비정상 구조는 오류로 처리한다.
     """
     table = TimeTable._from_data(data, school[0], school[2], school[3], codes)
+    return _validate_table(table)
+
+
+def _validate_table(table):
+    """Inspect interpreted timetable models, independently of response layout."""
     start = date.fromisoformat(table.start_date)
     if type(table.school_year) is not int or not 1900 <= table.school_year <= 9999:
         raise ValueError('invalid school year')
@@ -82,8 +87,9 @@ def check_live(report):
 
     for week in (0, 1):
         row = begin_step(report, f'Timetable week_num={week}')
-        data = TimeTable._fetch_timetable_data(school[3], week, codes, protocol)
-        detail = validate_timetable(data, school, codes)
+        text = TimeTable._request_timetable(school[3], week, codes, protocol)
+        table = TimeTable._from_response(text, school[0], school[2], school[3], codes, protocol)
+        detail = _validate_table(table)
         row.update(status='PASS', detail=detail)
 
 

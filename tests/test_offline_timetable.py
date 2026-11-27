@@ -1,6 +1,7 @@
 """Synthetic offline interpretation and transport/constructor equivalence."""
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ from pycomcigan import TimeTable
 from pycomcigan.service_protocol import parse_service_protocol
 from pycomcigan.timetable import Lecture, TimeTableData
 from scripts.check_live_parser import validate_timetable
+from test_encoded_fields import FIXTURES, PAGE as ENCODED_PAGE
 from test_encrypted_response import envelope
 from test_post_page_transport import POST_PAGE
 from test_service_protocol import KEY
@@ -29,14 +31,19 @@ MODERN_PAGE = (POST_PAGE.replace('자료119', 'xTeacher')
 
 
 def sample(codes, marked):
+    # The modern variant changes table indices as well as field names and
+    # transport. Both layouts must produce the same semantic timetable.
+    original, current = (2002, 1001) if marked else (1001, 2002)
+    teachers = ['', 'teacher B*', 'teacher A*'] if marked else ['', 'teacher A*', 'teacher B*']
+    subjects = ['', 'subject B', 'subject A'] if marked else ['', 'subject A', 'subject B']
     return {
         '지역명': 'region', '학년도': 2026, '시작일': '2026-11-09',
-        '일과시간': ['09:00'], '담임': [[1, 0]],
-        codes[2]: ['', 'teacher A*', 'teacher B*'],
-        codes[3]: ['', 'subject A', 'subject B'],
+        '일과시간': ['09:00'], '담임': [[2 if marked else 1, 0]],
+        codes[2]: teachers,
+        codes[3]: subjects,
         codes[4]: '2026-11-09 12:00',
-        codes[5]: [[], [[], [2, [3, '>2002' if marked else 2002, 2002, 0], [0]]]],
-        codes[6]: [[], [[], [2, [3, 1001, 2002, 0], [0]]]],
+        codes[5]: [[], [[], [2, [3, f'>{current}' if marked else current, current, 0], [0]]]],
+        codes[6]: [[], [[], [2, [3, original, current, 0], [0]]]],
         '분리': 1000 if marked else 100,
         '변경알림': '1' if marked else '0',
     }
@@ -120,3 +127,52 @@ def test_missing_original_information_is_not_an_empty_lesson(failure, exception)
         TimeTable._from_response(json.dumps(data), SCHOOL[0], SCHOOL[2], SCHOOL[3], codes, protocol)
     with pytest.raises(exception):
         validate_timetable(data, SCHOOL, codes)
+
+
+
+def test_encoded_fields_fixture_is_replayable_and_matches_public_path():
+    protocol = parse_service_protocol(ENCODED_PAGE)
+    codes = TimeTable._get_comcigan_codes(ENCODED_PAGE)
+    payload = FIXTURES['timetable']
+    with patch('pycomcigan.helpers.urlopen') as network:
+        offline = TimeTable._from_response(payload, 5000, '테스트고', 123, codes, protocol)
+        network.assert_not_called()
+    with patch('pycomcigan.timetable.get_comcigan_response_for_codes',
+               return_value=SimpleNamespace(text=ENCODED_PAGE)), \
+         patch('pycomcigan.timetable.school_search', return_value=[[5000, '지역', '테스트고', 123]]), \
+         patch('pycomcigan.timetable.get_response_encoding',
+               return_value=SimpleNamespace(text=payload)):
+        public = TimeTable('테스트고', school_code=123)
+    assert snapshot(offline) == snapshot(public)
+    assert offline.start_date == '2026-11-09'
+    assert offline.update_date == '2026-11-11 12:34:56'
+    assert offline.day_time == ['09:00']
+    assert offline.homeroom(1, 1) == '교사'
+    assert offline.timetable[1][1][1][0].subject == '수학'
+
+
+def test_offline_authentication_failure_does_not_construct_models():
+    protocol = parse_service_protocol(MODERN_PAGE)
+    codes = TimeTable._get_comcigan_codes(MODERN_PAGE)
+    payload = envelope(json.dumps(sample(codes, True)).encode(), key=KEY)
+    body, tag = payload.rsplit(':', 1)
+    tampered = body + ':' + ('A' if tag[0] != 'A' else 'B') + tag[1:]
+    with patch('pycomcigan.timetable._parse_timetable_data') as parse, \
+         patch('pycomcigan.helpers.urlopen') as network, \
+         pytest.raises(RuntimeError, match='authentication failed'):
+        TimeTable._from_response(tampered, SCHOOL[0], SCHOOL[2], SCHOOL[3], codes, protocol)
+    parse.assert_not_called()
+    network.assert_not_called()
+
+
+def test_decoded_data_replay_does_not_mutate_input_or_share_lesson_objects():
+    codes = TimeTable._get_comcigan_codes(LEGACY_PAGE)
+    data = sample(codes, False)
+    before = deepcopy(data)
+    first = TimeTable._from_data(data, SCHOOL[0], SCHOOL[2], SCHOOL[3], codes)
+    second = TimeTable._from_data(data, SCHOOL[0], SCHOOL[2], SCHOOL[3], codes)
+    assert data == before
+    assert snapshot(first) == snapshot(second)
+    first.timetable[1][1][1][0].original.subject = 'edited'
+    assert second.timetable[1][1][1][0].original.subject == 'subject A'
+    assert data == before

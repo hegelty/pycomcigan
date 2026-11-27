@@ -321,6 +321,7 @@ def _process_homeroom_teachers(homeroom_data: List[List[int]], teacher_list: Lis
 
     return processed_homeroom
 
+
 def _parse_timetable_data(data, codes):
     """Interpret decoded fields as the existing timetable models and metadata.
 
@@ -487,7 +488,13 @@ class TimeTable:
         self.school_code = school_code
         self.school_name = school_name
         self.local_code = local_code
-        self.__dict__.update(parsed)
+        self.local_name = parsed["local_name"]
+        self.school_year = parsed["school_year"]
+        self.start_date = parsed["start_date"]
+        self.day_time = parsed["day_time"]
+        self.update_date = parsed["update_date"]
+        self.timetable = parsed["timetable"]
+        self._homeroom_teacher = parsed["_homeroom_teacher"]
 
     # Retain existing private helpers used by the offline regression tests.
     _build_timetable = staticmethod(_build_timetable)
