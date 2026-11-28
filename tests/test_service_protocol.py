@@ -57,6 +57,21 @@ def test_school_code_formula_ignores_unrelated_lists_and_rejects_conflicts():
         parse_service_protocol(decoy + page)
 
 
+def test_school_code_formula_uses_locally_declared_divisor():
+    page = PAGE.replace('var r=Math.floor(학교명단[i][0]/5000)+2;', '')
+    page += '''
+    function 학교명단_출력하기(data) {var k=3797;var r=Math.floor(data[i][0]/k)+2;}
+    function sc_disp(sc) {var k=3797;var r=Math.floor(H학교명단.학교검색[i][0]/k)+2;}
+    '''
+    protocol = parse_service_protocol(page)
+    assert (protocol.school_divisor, protocol.school_offset) == (3797, 2)
+    with pytest.raises(RuntimeError, match='school code column'):
+        parse_service_protocol(page.replace('var k=3797;var r=Math.floor(H학교명단',
+                                            'var k=4000;var r=Math.floor(H학교명단'))
+    with pytest.raises(RuntimeError, match='school code column'):
+        parse_service_protocol(page.replace('var k=3797;', 'var k=0;'))
+
+
 def test_protocol_supports_literal_key_and_rejects_executable_key():
     expression = "(function(a){return a[1]+a[0];})(['8899aabbccddeeff','0011223344556677'])"
     assert parse_service_protocol(PAGE.replace(expression, "'" + KEY.hex() + "'")).key == KEY
