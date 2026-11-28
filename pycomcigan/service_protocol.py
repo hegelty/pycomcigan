@@ -190,6 +190,15 @@ def parse_service_protocol(content: str) -> ServiceProtocol:
     for name, section, section_start in functions:
         if name == '학교명단_출력하기':
             columns.update(re.findall(column_prefix + 'data' + column_suffix, section))
+        sources = r'(?:학교명단|H?학교명단\s*\.\s*학교검색)'
+        if name == '학교명단_출력하기':
+            sources = r'(?:data|학교명단|H?학교명단\s*\.\s*학교검색)'
+        variable_formula = (
+            rf'\b(?:var|let|const)\s+(?P<divisor>(?:{_JS_IDENTIFIER}))\s*=\s*(?P<value>\d+)\s*;\s*'
+            rf'(?:var|let|const)\s+(?:{_JS_IDENTIFIER})\s*=\s*Math\.floor\(\s*{sources}'
+            r'\s*\[i\]\s*\[0\]\s*/\s*(?P=divisor)\s*\)\s*\+\s*(?P<offset>\d+)'
+        )
+        columns.update((m.group('value'), m.group('offset')) for m in re.finditer(variable_formula, section))
     values = {(int(divisor), int(offset)) for divisor, offset in columns}
     if len(values) != 1:
         raise RuntimeError('Unable to parse Comcigan school code column')
